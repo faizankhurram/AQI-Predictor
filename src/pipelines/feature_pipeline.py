@@ -6,6 +6,12 @@ and upserts new rows into the Hopsworks Feature Group.
 
 import os
 import sys
+
+# Must run before `from src.*` (script mode does not add repo root to sys.path).
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import logging
 from datetime import datetime, timedelta
 
@@ -13,7 +19,6 @@ import pandas as pd
 from dotenv import load_dotenv
 import yaml
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from src.data.openmeteo_client import fetch_combined
 from src.features.build_features import build_features, drop_incomplete_rows
 

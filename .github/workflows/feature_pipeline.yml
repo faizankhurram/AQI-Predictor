@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,12 +25,18 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Verify src package layout
+        run: |
+          test -f src/data/openmeteo_client.py
+          python -c "from src.data.openmeteo_client import fetch_combined; print('import OK:', fetch_combined.__module__)"
 
       - name: Run feature pipeline
         env:
-          PYTHONPATH: ${{ github.workspace }}
           HOPSWORKS_HOST: eu-west.cloud.hopsworks.ai
           HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
           HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
-        run: python src/pipelines/feature_pipeline.py
+        run: python run_feature_pipeline.py

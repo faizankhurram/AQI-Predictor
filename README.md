@@ -127,8 +127,8 @@ jupyter notebook notebooks/eda_quick.ipynb
    - `HOPSWORKS_API_KEY` — your Hopsworks API key
    - `HOPSWORKS_PROJECT` — your Hopsworks project name (e.g. `aqi-karachi`)
 
-   Workflows set `HOPSWORKS_HOST=eu-west.cloud.hopsworks.ai` and `PYTHONPATH` automatically.
-   Ensure the full `src/` tree (including `src/data/`) is committed before running Actions.
+   Workflows run `pip install -e .` then `python run_feature_pipeline.py` from the repo root.
+   Commit `pyproject.toml`, `run_feature_pipeline.py`, and the full `src/` tree (folder must be **`src/`**, not `scr/`).
 4. The hourly and daily workflows will start automatically on the schedule.
 5. To test immediately: go to **Actions → Feature Pipeline (Hourly) → Run workflow**.
 

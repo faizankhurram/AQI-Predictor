@@ -9,6 +9,11 @@ Usage:
 
 import os
 import sys
+
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import time
 import argparse
 import logging
@@ -17,8 +22,6 @@ from datetime import datetime, timedelta
 import pandas as pd
 from dotenv import load_dotenv
 import yaml
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.data.openmeteo_client import fetch_combined
 from src.features.build_features import build_features, drop_incomplete_rows
 

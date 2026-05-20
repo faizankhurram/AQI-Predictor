@@ -14,14 +14,17 @@ Usage:
 
 import os
 import sys
+
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import argparse
 import logging
 
 import pandas as pd
 from dotenv import load_dotenv
 import yaml
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from src.models.sklearn_trainer import train_and_evaluate, time_split, MODELS_DIR
 from src.features.build_features import get_feature_columns, get_target_columns, drop_incomplete_rows
 

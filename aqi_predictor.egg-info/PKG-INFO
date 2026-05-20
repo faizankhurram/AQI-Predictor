@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: aqi-predictor
+Version: 1.0.0
+Summary: Karachi AQI Predictor
+Requires-Python: >=3.11
+Requires-Dist: hopsworks==4.7.5
+Requires-Dist: scikit-learn==1.5.2
+Requires-Dist: streamlit==1.35.0
+Requires-Dist: fastapi==0.111.0
+Requires-Dist: uvicorn==0.30.0
+Requires-Dist: shap==0.45.1
+Requires-Dist: pandas==2.1.4
+Requires-Dist: numpy==1.26.4
+Requires-Dist: requests==2.32.3
+Requires-Dist: python-dotenv==1.0.1
+Requires-Dist: plotly==5.22.0
+Requires-Dist: joblib==1.4.2
+Requires-Dist: pyyaml==6.0.2
