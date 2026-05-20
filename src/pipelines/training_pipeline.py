@@ -21,7 +21,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import yaml
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from src.models.sklearn_trainer import train_and_evaluate, time_split, MODELS_DIR
 from src.features.build_features import get_feature_columns, get_target_columns, drop_incomplete_rows
 

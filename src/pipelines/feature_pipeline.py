@@ -13,7 +13,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import yaml
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from src.data.openmeteo_client import fetch_combined
 from src.features.build_features import build_features, drop_incomplete_rows
 

@@ -25,6 +25,8 @@ jobs:
 
       - name: Run feature pipeline
         env:
+          PYTHONPATH: ${{ github.workspace }}
+          HOPSWORKS_HOST: eu-west.cloud.hopsworks.ai
           HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
           HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
         run: python src/pipelines/feature_pipeline.py
