@@ -19,8 +19,16 @@ import pandas as pd
 from dotenv import load_dotenv
 import yaml
 
-from src.data.openmeteo_client import fetch_combined
-from src.features.build_features import build_features, drop_incomplete_rows
+try:
+    from src.data.openmeteo_client import fetch_combined
+    from src.features.build_features import build_features, drop_incomplete_rows
+except ModuleNotFoundError as exc:
+    _data_dir = os.path.join(_REPO_ROOT, "src", "data")
+    raise SystemExit(
+        f"Import failed ({exc}). repo_root={_REPO_ROOT!r}, "
+        f"src/data exists={os.path.isdir(_data_dir)}. "
+        "On GitHub Actions: use 'Run workflow' on branch main (not 'Re-run failed jobs' on an old run)."
+    ) from exc
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

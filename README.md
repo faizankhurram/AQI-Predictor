@@ -129,6 +129,9 @@ jupyter notebook notebooks/eda_quick.ipynb
 
    Workflows run `pip install -e .` then `python run_feature_pipeline.py` from the repo root.
    Commit `pyproject.toml`, `run_feature_pipeline.py`, and the full `src/` tree (folder must be **`src/`**, not `scr/`).
+
+   **Important:** If a run fails, use **Actions → Feature Pipeline → Run workflow** on branch `main`.
+   Do **not** use **Re-run failed jobs** — that re-executes the old commit (before `src/data/` existed) and keeps the broken command `python src/pipelines/feature_pipeline.py`.
 4. The hourly and daily workflows will start automatically on the schedule.
 5. To test immediately: go to **Actions → Feature Pipeline (Hourly) → Run workflow**.
 
