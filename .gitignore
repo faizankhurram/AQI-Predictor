@@ -1,0 +1,30 @@
+# Environment
+.env
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Data (large files — commit only schema docs)
+data/
+models_artifacts/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+
+# Report images (regenerate from notebook)
+report/*.png

@@ -1,0 +1,26 @@
+location:
+  name: Karachi
+  latitude: 24.8607
+  longitude: 67.0011
+  timezone: Asia/Karachi
+
+hopsworks:
+  feature_group_name: aqi_hourly_v1
+  feature_group_version: 1
+  feature_view_name: aqi_hourly_view
+  feature_view_version: 1
+  model_name: aqi_forecaster
+  model_version: 1
+
+data:
+  backfill_days: 90
+  forecast_horizons_h: [24, 48, 72]
+  lag_hours: [1, 24]
+  train_test_split_days: 14
+
+alerts:
+  good_max: 50
+  moderate_max: 100
+  sensitive_max: 150
+  unhealthy_max: 200
+  # above 200 = Very Unhealthy / Hazardous

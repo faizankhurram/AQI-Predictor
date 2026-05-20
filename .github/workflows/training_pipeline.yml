@@ -1,0 +1,30 @@
+name: Training Pipeline (Daily)
+
+on:
+  schedule:
+    - cron: "0 2 * * *"    # Daily at 02:00 UTC (07:00 Karachi)
+  workflow_dispatch:         # Manual trigger for testing
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run training pipeline
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+        run: python src/pipelines/training_pipeline.py
