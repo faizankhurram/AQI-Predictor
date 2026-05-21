@@ -1,9 +1,9 @@
 """
-Inference module: loads the registered model + latest Feature Group rows
+Inference module: loads the registered model + latest feature rows
 and returns a 3-day (72 h) AQI forecast for Karachi.
 
 Can run in two modes:
-  - Hopsworks mode (default): pulls model from registry + features from FG
+  - MongoDB mode (default): pulls model + features from MongoDB
   - Local mode (--local): uses models_artifacts/best_model.pkl + data/backfill.csv
 """
 
@@ -19,8 +19,9 @@ from dotenv import load_dotenv
 import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from src.features.build_features import get_feature_columns, build_features, drop_incomplete_rows
+from src.features.build_features import get_feature_columns, build_features
 from src.data.openmeteo_client import fetch_last_n_hours
+from src.utils.mongo_store import DEFAULT_MODEL_NAME, load_latest_model, read_features
 
 load_dotenv()
 log = logging.getLogger(__name__)
@@ -42,29 +43,16 @@ def load_model_local():
     return joblib.load(path)
 
 
-def load_model_hopsworks(cfg: dict):
-    from src.utils.hopsworks_login import login_hopsworks
-
-    project = login_hopsworks()
-    mr = project.get_model_registry()
-    hw_model = mr.get_model(cfg["hopsworks"]["model_name"])
-    model_dir = hw_model.download()
-    model_path = os.path.join(model_dir, "best_model.pkl")
-    return joblib.load(model_path)
+def load_model_mongodb(cfg: dict):
+    model_name = cfg.get("mongodb", {}).get("model_name", DEFAULT_MODEL_NAME)
+    return load_latest_model(model_name, cfg)
 
 
-def get_latest_features_hopsworks(cfg: dict) -> pd.DataFrame:
-    """Pull the most recent rows from the Feature Group."""
-    from src.utils.hopsworks_login import login_hopsworks
-
-    project = login_hopsworks()
-    fs = project.get_feature_store()
-    fg = fs.get_feature_group(
-        name=cfg["hopsworks"]["feature_group_name"],
-        version=cfg["hopsworks"]["feature_group_version"],
-    )
-    df = fg.read()
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+def get_latest_features_mongodb(cfg: dict) -> pd.DataFrame:
+    """Pull the most recent rows from MongoDB feature store."""
+    df = read_features(cfg)
+    if df.empty:
+        raise RuntimeError("MongoDB feature collection is empty.")
     return df.sort_values("timestamp")
 
 
@@ -107,11 +95,11 @@ def predict(local: bool = False) -> dict:
         model = load_model_local()
         df = get_latest_features_live(cfg)
     else:
-        model = load_model_hopsworks(cfg)
+        model = load_model_mongodb(cfg)
         try:
-            df = get_latest_features_hopsworks(cfg)
+            df = get_latest_features_mongodb(cfg)
         except Exception:
-            log.warning("Hopsworks FG read failed; falling back to live fetch.")
+            log.warning("MongoDB feature read failed; falling back to live fetch.")
             df = get_latest_features_live(cfg)
 
     feature_cols = get_feature_columns()

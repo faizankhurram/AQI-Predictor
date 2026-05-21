@@ -1,10 +1,10 @@
 """
-Backfill pipeline — run ONCE to populate the Feature Group with historical data.
+Backfill pipeline — run ONCE to populate MongoDB with historical feature data.
 
 Usage:
     python src/pipelines/backfill.py                  # default 90 days
     python src/pipelines/backfill.py --days 180        # extend backfill
-    python src/pipelines/backfill.py --csv-only        # save CSV, skip Hopsworks
+    python src/pipelines/backfill.py --csv-only        # save CSV, skip MongoDB
 """
 
 import os
@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 import yaml
 from src.data.openmeteo_client import fetch_combined
 from src.features.build_features import build_features, drop_incomplete_rows
+from src.utils.mongo_store import upsert_features
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -52,8 +53,6 @@ def run(backfill_days: int = 90, csv_only: bool = False):
     cfg = load_config()
     lat = cfg["location"]["latitude"]
     lon = cfg["location"]["longitude"]
-    fg_name = cfg["hopsworks"]["feature_group_name"]
-    fg_version = cfg["hopsworks"]["feature_group_version"]
 
     end_dt = datetime.utcnow() - timedelta(days=1)   # yesterday (archive available)
     start_dt = end_dt - timedelta(days=backfill_days)
@@ -89,29 +88,18 @@ def run(backfill_days: int = 90, csv_only: bool = False):
     log.info("CSV backup saved → %s", csv_path)
 
     if csv_only:
-        log.info("--csv-only flag set; skipping Hopsworks insert.")
+        log.info("--csv-only flag set; skipping MongoDB upsert.")
         return
 
-    from src.utils.hopsworks_login import login_hopsworks
-
-    project = login_hopsworks()
-    fs = project.get_feature_store()
-    fg = fs.get_or_create_feature_group(
-        name=fg_name,
-        version=fg_version,
-        primary_key=["timestamp"],
-        event_time="timestamp",
-        description="Hourly AQI features for Karachi",
-    )
-
-    log.info("Inserting %d rows into Hopsworks Feature Group...", len(full_df))
-    fg.insert(full_df, write_options={"wait_for_job": True})
+    log.info("Upserting %d rows into MongoDB feature collection...", len(full_df))
+    upserted = upsert_features(full_df, cfg)
+    log.info("Upsert submitted for %d rows.", upserted)
     log.info("Backfill complete.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=90, help="Days to backfill (default 90)")
-    parser.add_argument("--csv-only", action="store_true", help="Save CSV, skip Hopsworks")
+    parser.add_argument("--csv-only", action="store_true", help="Save CSV, skip MongoDB")
     args = parser.parse_args()
     run(backfill_days=args.days, csv_only=args.csv_only)

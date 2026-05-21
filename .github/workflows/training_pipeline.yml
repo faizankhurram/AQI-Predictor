@@ -33,10 +33,10 @@ jobs:
         run: |
           test -f src/data/openmeteo_client.py
           python -c "from src.models.sklearn_trainer import train_and_evaluate; print('import OK')"
+          python -c "import pymongo; print('pymongo OK')"
 
       - name: Run training pipeline
         env:
-          HOPSWORKS_HOST: eu-west.cloud.hopsworks.ai
-          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
-          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DB: ${{ secrets.MONGODB_DB || 'aqi_predictor' }}
         run: python run_training_pipeline.py

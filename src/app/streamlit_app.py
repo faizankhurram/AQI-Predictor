@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.serving.predict import predict, aqi_label
 from src.features.build_features import get_feature_columns
+from src.utils.mongo_store import read_features
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +54,14 @@ def aqi_bg(label: str) -> str:
     return AQI_BG.get(label, "#f0f0f0")
 
 
-def load_historical_csv() -> pd.DataFrame | None:
+def load_historical_data() -> pd.DataFrame | None:
+    try:
+        df = read_features()
+        if not df.empty:
+            return df.sort_values("timestamp")
+    except Exception:
+        pass
+
     csv_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "backfill.csv")
     if os.path.exists(csv_path):
         df = pd.read_csv(csv_path, parse_dates=["timestamp"])
@@ -222,11 +230,11 @@ def render_shap(feature_row: dict):
 # ── Main app ─────────────────────────────────────────────────────────────────
 def main():
     st.title("🌫️ Karachi AQI Forecaster")
-    st.caption("3-day Air Quality Index prediction · Powered by Open-Meteo + Hopsworks + scikit-learn")
+    st.caption("3-day Air Quality Index prediction · Powered by Open-Meteo + MongoDB + scikit-learn")
 
     # Sidebar controls
     st.sidebar.header("Settings")
-    use_local = st.sidebar.toggle("Use local model (no Hopsworks)", value=True)
+    use_local = st.sidebar.toggle("Use local model (no MongoDB)", value=False)
     show_shap = st.sidebar.toggle("Show SHAP explanation", value=True)
     refresh = st.sidebar.button("🔄 Refresh prediction")
 
@@ -240,7 +248,7 @@ def main():
 
     if st.session_state.get("pred_error"):
         st.error(f"Prediction failed: {st.session_state['pred_error']}")
-        st.info("Make sure you have run the training pipeline at least once (`python src/pipelines/training_pipeline.py --csv data/backfill.csv`) and the backfill CSV exists.")
+        st.info("Make sure MongoDB credentials are set and the training pipeline has registered a model at least once.")
         return
 
     result = st.session_state["prediction"]
@@ -258,11 +266,11 @@ def main():
     st.divider()
 
     # Historical chart
-    hist_df = load_historical_csv()
+    hist_df = load_historical_data()
     if hist_df is not None and "aqi_us" in hist_df.columns:
         render_history_chart(hist_df, forecasts, last_ts)
     else:
-        st.info("No historical data found. Run `python src/pipelines/backfill.py --csv-only` to generate the local CSV.")
+        st.info("No historical data found. Run `python src/pipelines/backfill.py --days 90` to populate MongoDB.")
 
     st.divider()
 

@@ -94,7 +94,7 @@ def get_target_columns() -> list[str]:
 
 
 def drop_incomplete_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove rows where input features are NaN (for hourly FG ingest; targets may be NaN)."""
+    """Remove rows where input features are NaN (for hourly MongoDB ingest; targets may be NaN)."""
     cols = get_feature_columns()
     existing = [c for c in cols if c in df.columns]
     return df.dropna(subset=existing).reset_index(drop=True)

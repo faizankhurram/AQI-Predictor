@@ -4,7 +4,7 @@ FastAPI serving layer.
 Endpoints:
   GET  /health          — liveness check
   GET  /predict         — run inference, return 3-day forecast JSON
-  GET  /predict/local   — same but uses local model + live Open-Meteo (no Hopsworks)
+  GET  /predict/local   — same but uses local model + live Open-Meteo (no MongoDB)
 """
 
 import logging
@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AQI Predictor API — Karachi",
-    description="3-day Air Quality Index forecast powered by Open-Meteo + Hopsworks + scikit-learn.",
+    description="3-day Air Quality Index forecast powered by Open-Meteo + MongoDB + scikit-learn.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -51,7 +51,7 @@ def health():
 
 @app.get("/predict")
 def predict_endpoint():
-    """Fetch latest features from Hopsworks FG and return 3-day forecast."""
+    """Fetch latest features and model from MongoDB and return 3-day forecast."""
     try:
         result = predict(local=False)
         return result
@@ -62,7 +62,7 @@ def predict_endpoint():
 
 @app.get("/predict/local")
 def predict_local():
-    """Use local model artifact + live Open-Meteo data (no Hopsworks needed)."""
+    """Use local model artifact + live Open-Meteo data (no MongoDB needed)."""
     try:
         result = predict(local=True)
         return result

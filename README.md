@@ -2,7 +2,7 @@
 
 End-to-end, serverless 3-day Air Quality Index forecasting for **Karachi, Pakistan**.
 
-Built with Open-Meteo · Hopsworks Feature Store + Model Registry · scikit-learn · GitHub Actions · Streamlit · FastAPI
+Built with Open-Meteo · MongoDB Atlas · scikit-learn · GitHub Actions · Streamlit · FastAPI
 
 ---
 
@@ -11,8 +11,14 @@ Built with Open-Meteo · Hopsworks Feature Store + Model Registry · scikit-lear
 ### 1. Prerequisites
 
 - Python 3.11+
-- A free [Hopsworks Serverless](https://app.hopsworks.ai) account (create project `aqi-karachi`, generate API key)
+- A free [MongoDB Atlas](https://www.mongodb.com/atlas/database) cluster
 - A GitHub account (for CI/CD)
+
+MongoDB Atlas setup:
+- Create a database user with read/write access.
+- Add your current IP address for local development.
+- For GitHub Actions, allow runner access in **Network Access** (for a student/demo project, `0.0.0.0/0` is simplest; use a restricted rule if your organization provides one).
+- Copy the SRV connection string into `MONGODB_URI`.
 
 ### 2. Setup
 
@@ -28,31 +34,28 @@ venv\Scripts\activate          # Windows
 # Install dependencies
 pip install -r requirements.txt
 
-# If Hopsworks fails on Windows due pyjks/twofish build issues,
-# use the workaround section below.
-
 # Configure credentials
 cp .env.example .env
-# Edit .env → set HOPSWORKS_API_KEY, HOPSWORKS_PROJECT, and HOPSWORKS_HOST
+# Edit .env → set MONGODB_URI and MONGODB_DB
 ```
 
 ### 3. Backfill historical data (run once)
 
 ```bash
-# Fetch 90 days of Open-Meteo data and push to Hopsworks Feature Group
+# Fetch 90 days of Open-Meteo data and upsert into MongoDB
 python src/pipelines/backfill.py --days 90
 
-# Or save to local CSV only (skip Hopsworks, useful for local dev)
+# Or save to local CSV only (skip MongoDB, useful for local dev)
 python src/pipelines/backfill.py --days 90 --csv-only
 ```
 
 ### 4. Train models
 
 ```bash
-# From Hopsworks Feature Group (requires credentials)
+# From MongoDB feature store (requires credentials)
 python src/pipelines/training_pipeline.py
 
-# From local CSV backup (no Hopsworks required)
+# From local CSV backup (no MongoDB required)
 python src/pipelines/training_pipeline.py --csv data/backfill.csv
 
 # Also train optional TensorFlow MLP
@@ -65,7 +68,7 @@ python src/pipelines/training_pipeline.py --csv data/backfill.csv --with-tf
 streamlit run src/app/streamlit_app.py
 ```
 
-Toggle "Use local model" in the sidebar to avoid needing Hopsworks credentials for the UI.
+Toggle "Use local model" in the sidebar to avoid needing MongoDB credentials for the UI.
 
 ### 6. Launch the API (optional)
 
@@ -73,7 +76,7 @@ Toggle "Use local model" in the sidebar to avoid needing Hopsworks credentials f
 uvicorn src.serving.api:app --reload
 # Endpoints:
 #   GET /health
-#   GET /predict        (uses Hopsworks FG + registry)
+#   GET /predict        (uses MongoDB features + model registry)
 #   GET /predict/local  (uses local model + live Open-Meteo)
 ```
 
@@ -93,7 +96,7 @@ jupyter notebook notebooks/eda_quick.ipynb
 ├── .github/workflows/
 │   ├── feature_pipeline.yml   # Runs every hour
 │   └── training_pipeline.yml  # Runs daily at 02:00 UTC
-├── config/settings.yaml        # Karachi lat/lon, thresholds, FG names
+├── config/settings.yaml        # Karachi lat/lon, thresholds, MongoDB names
 ├── data/                       # Local CSV backup (git-ignored)
 ├── models_artifacts/           # Saved .pkl + metrics.json (git-ignored)
 ├── notebooks/eda_quick.ipynb
@@ -124,8 +127,8 @@ jupyter notebook notebooks/eda_quick.ipynb
 1. Push this repo to GitHub.
 2. Go to **Settings → Secrets and variables → Actions**.
 3. Add secrets:
-   - `HOPSWORKS_API_KEY` — your Hopsworks API key
-   - `HOPSWORKS_PROJECT` — your Hopsworks project name (e.g. `aqi-karachi`)
+   - `MONGODB_URI` — MongoDB Atlas connection string
+   - Optional: `MONGODB_DB` — database name (defaults to `aqi_predictor`)
 
    Workflows run `pip install -e .` then `python run_feature_pipeline.py` from the repo root.
    Commit `pyproject.toml`, `run_feature_pipeline.py`, and the full `src/` tree (folder must be **`src/`**, not `scr/`).
@@ -141,14 +144,14 @@ jupyter notebook notebooks/eda_quick.ipynb
 
 | Variable | Description |
 |----------|-------------|
-| `HOPSWORKS_API_KEY` | Hopsworks Serverless API key |
-| `HOPSWORKS_PROJECT` | Hopsworks project name |
-| `HOPSWORKS_HOST` | API host (`eu-west.cloud.hopsworks.ai`; do not use `c.app.hopsworks.ai`) |
-| `HOPSWORKS_WAIT_FOR_JOB` | Set to `0` in CI so insert does not block on slow Hopsworks jobs (GitHub Actions sets this). Use `1` locally to wait until ingestion finishes. |
+| `MONGODB_URI` | MongoDB Atlas connection string |
+| `MONGODB_DB` | Database name (default: `aqi_predictor`) |
 
 Copy `.env.example` to `.env` and fill in the values. Never commit `.env` to git.
 
-If a feature workflow shows **"The operation was canceled"** after `Inserting N rows…`, it usually hit the job time limit while waiting on Hopsworks. Push the latest workflow (uses `HOPSWORKS_WAIT_FOR_JOB=0`) and run again; confirm ingestion under **Feature Group → Jobs** in Hopsworks.
+MongoDB collections are created automatically:
+- `aqi_hourly_v1` for feature rows, unique on `timestamp`
+- `model_registry` + GridFS (`fs.files`, `fs.chunks`) for model artifacts
 
 ---
 
@@ -167,28 +170,8 @@ The dashboard shows a coloured banner when current or any forecast AQI exceeds 1
 
 ---
 
-## Hopsworks install (Windows / Serverless)
-
-Serverless backend is **4.7.x** — use matching client and cloud API host:
+## MongoDB Sanity Check
 
 ```bash
-pip install -r requirements.txt
+python -c "from dotenv import load_dotenv; load_dotenv(); from src.utils.mongo_store import get_database; print(get_database().name)"
 ```
-
-`requirements.txt` includes `hopsworks==4.7.5` and `confluent-kafka` (required for Feature Group `insert` from GitHub Actions).
-
-Set in `.env`:
-
-```env
-HOPSWORKS_HOST=eu-west.cloud.hopsworks.ai
-```
-
-**Do not** use `pip install hopsworks==3.7.0 --no-deps` / `hsfs --no-deps` — that leaves a broken `hsfs` package (no `connection` module).
-
-Sanity check:
-
-```bash
-python -c "from dotenv import load_dotenv; load_dotenv(); from hsfs import connection; import hopsworks; print('OK')"
-```
-
-If `twofish` build fails on older setups, install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with C++ workload, then retry `pip install hopsworks==4.7.5`.

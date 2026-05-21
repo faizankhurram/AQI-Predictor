@@ -3,7 +3,7 @@
 
 **City:** Karachi, Pakistan (24.8607°N, 67.0011°E)  
 **Submission Deadline:** 26 May 2026  
-**Stack:** Open-Meteo · Hopsworks Serverless · scikit-learn · GitHub Actions · Streamlit · FastAPI
+**Stack:** Open-Meteo · MongoDB Atlas · scikit-learn · GitHub Actions · Streamlit · FastAPI
 
 ---
 
@@ -19,12 +19,12 @@ Air quality in Karachi regularly reaches hazardous levels due to vehicular emiss
 Open-Meteo (Air Quality + Weather)
         │
         ▼
-feature_pipeline.py  ──►  Hopsworks Feature Group (aqi_hourly_v1)
+feature_pipeline.py  ──►  MongoDB Feature Collection (aqi_hourly_v1)
         │                                │
 (hourly, GitHub Actions)          training_pipeline.py
                                          │ (daily, GitHub Actions)
                                          ▼
-                                  Model Registry (best_model)
+                                  MongoDB GridFS Model Registry
                                          │
                             ┌────────────┴────────────┐
                             ▼                         ▼
@@ -49,7 +49,7 @@ No API key required. Historical archive used for backfill; forecast endpoint use
 
 ## 4. Feature Engineering
 
-Each hourly row in the Feature Group contains:
+Each hourly row in the MongoDB feature collection contains:
 
 | Category | Features |
 |----------|----------|
@@ -74,10 +74,10 @@ Two models trained on the multi-output regression task (predict AQI at +24h, +48
 | Ridge Regression | _fill after training_ | _fill_ | _fill_ |
 | Random Forest | _fill after training_ | _fill_ | _fill_ |
 
-> Best model registered in Hopsworks Model Registry. See `models_artifacts/metrics.json` for full per-horizon breakdown.
+> Best model registered in MongoDB GridFS model registry. See `models_artifacts/metrics.json` for full per-horizon breakdown.
 
 ### Optional: TensorFlow MLP
-A 2-layer MLP (128 → 64 → 3 outputs) was also trained. It was registered to the Model Registry only if its average RMSE beat the sklearn best model.
+A 2-layer MLP (128 → 64 → 3 outputs) was also trained. It can be registered to the MongoDB model registry if its average RMSE beats the sklearn best model.
 
 ---
 
@@ -88,7 +88,7 @@ A 2-layer MLP (128 → 64 → 3 outputs) was also trained. It was registered to 
 | `feature_pipeline.yml` | Every hour (`0 * * * *`) | `workflow_dispatch` available |
 | `training_pipeline.yml` | Daily at 02:00 UTC (`0 2 * * *`) | `workflow_dispatch` available |
 
-Secrets required: `HOPSWORKS_API_KEY`, `HOPSWORKS_PROJECT` (set in GitHub → Settings → Secrets).
+Secrets required: `MONGODB_URI` (and optional `MONGODB_DB`) set in GitHub → Settings → Secrets.
 
 ---
 
@@ -162,7 +162,7 @@ git clone <repo-url>
 cd AQI-Predictor
 python -m venv venv && venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in Hopsworks credentials
+cp .env.example .env   # fill in MongoDB credentials
 
 # 2. Backfill 90 days
 python src/pipelines/backfill.py --days 90

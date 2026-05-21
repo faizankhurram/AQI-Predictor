@@ -1,7 +1,7 @@
 """
 Live feature pipeline — runs hourly via GitHub Actions.
 Fetches the last 72 h of Open-Meteo data, computes features,
-and upserts new rows into the Hopsworks Feature Group.
+and upserts new rows into MongoDB.
 """
 
 import os
@@ -22,6 +22,7 @@ import yaml
 try:
     from src.data.openmeteo_client import fetch_for_live_ingest
     from src.features.build_features import build_features, drop_incomplete_features
+    from src.utils.mongo_store import upsert_features
 except ModuleNotFoundError as exc:
     _data_dir = os.path.join(_REPO_ROOT, "src", "data")
     raise SystemExit(
@@ -48,10 +49,7 @@ def run():
     cfg = load_config()
     lat = cfg["location"]["latitude"]
     lon = cfg["location"]["longitude"]
-    fg_name = cfg["hopsworks"]["feature_group_name"]
-    fg_version = cfg["hopsworks"]["feature_group_version"]
-    project_name = os.environ["HOPSWORKS_PROJECT"]
-    api_key = os.environ["HOPSWORKS_API_KEY"]
+    collection_name = cfg["mongodb"]["feature_collection"]
 
     log.info("Fetching multi-day Open-Meteo window for lag features (lookback=5 days)")
     try:
@@ -78,51 +76,9 @@ def run():
         log.warning("No rows in insert window — skipping Feature Store write.")
         return
 
-    from src.utils.hopsworks_login import login_hopsworks
-
-    project = login_hopsworks(project=project_name, api_key_value=api_key)
-    fs = project.get_feature_store()
-    fg = fs.get_or_create_feature_group(
-        name=fg_name,
-        version=fg_version,
-        primary_key=["timestamp"],
-        event_time="timestamp",
-        description="Hourly AQI features for Karachi",
-    )
-
-    # If a previous materialization job is still running, wait for it before inserting.
-    # This avoids the "already running" warning that blocks the new job from starting.
-    try:
-        state = fg.materialization_job.get_state()
-        if state in ("RUNNING", "INITIALIZING", "CONVERTING_DATASET"):
-            log.info("Waiting for existing materialization job to finish (state=%s)...", state)
-            fg.materialization_job.get_final_state()
-            log.info("Previous materialization job finished.")
-    except Exception as exc:
-        log.debug("Could not check materialization job state: %s", exc)
-
-    # Serverless materialization can exceed GitHub's job limit if we block on the job.
-    wait_for_job = os.environ.get("HOPSWORKS_WAIT_FOR_JOB", "1").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-        "off",
-    )
-    log.info(
-        "Inserting %d rows into Feature Group '%s' (wait_for_job=%s)",
-        len(to_insert),
-        fg_name,
-        wait_for_job,
-    )
-    fg.insert(to_insert, write_options={"wait_for_job": wait_for_job})
-    if wait_for_job:
-        log.info("Done — Hopsworks ingestion job finished.")
-    else:
-        log.info(
-            "Done — rows submitted to Kafka; materialization runs in Hopsworks. "
-            "Check Feature Group '%s' → Jobs/Ingestion for status.",
-            fg_name,
-        )
+    log.info("Upserting %d rows into MongoDB collection '%s'", len(to_insert), collection_name)
+    upserted = upsert_features(to_insert, cfg)
+    log.info("Done — upsert submitted for %d rows.", upserted)
 
 
 if __name__ == "__main__":

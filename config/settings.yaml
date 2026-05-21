@@ -4,13 +4,11 @@ location:
   longitude: 67.0011
   timezone: Asia/Karachi
 
-hopsworks:
-  feature_group_name: aqi_hourly_v1
-  feature_group_version: 1
-  feature_view_name: aqi_hourly_view
-  feature_view_version: 1
+mongodb:
+  database: aqi_predictor
+  feature_collection: aqi_hourly_v1
+  model_collection: model_registry
   model_name: aqi_forecaster
-  model_version: 1
 
 data:
   backfill_days: 90
