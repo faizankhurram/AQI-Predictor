@@ -8,7 +8,7 @@ on:
 jobs:
   ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     defaults:
       run:
@@ -50,4 +50,6 @@ jobs:
           HOPSWORKS_HOST: eu-west.cloud.hopsworks.ai
           HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
           HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          # Do not block on Hopsworks materialization (often >15 min); data still ingests async.
+          HOPSWORKS_WAIT_FOR_JOB: "0"
         run: python run_feature_pipeline.py

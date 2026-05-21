@@ -90,9 +90,28 @@ def run():
         description="Hourly AQI features for Karachi",
     )
 
-    log.info("Inserting %d rows into Feature Group '%s'", len(to_insert), fg_name)
-    fg.insert(to_insert, write_options={"wait_for_job": True})
-    log.info("Done.")
+    # Serverless materialization can exceed GitHub's job limit if we block on the job.
+    wait_for_job = os.environ.get("HOPSWORKS_WAIT_FOR_JOB", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    log.info(
+        "Inserting %d rows into Feature Group '%s' (wait_for_job=%s)",
+        len(to_insert),
+        fg_name,
+        wait_for_job,
+    )
+    fg.insert(to_insert, write_options={"wait_for_job": wait_for_job})
+    if wait_for_job:
+        log.info("Done — Hopsworks ingestion job finished.")
+    else:
+        log.info(
+            "Done — rows submitted to Kafka; materialization runs in Hopsworks. "
+            "Check Feature Group '%s' → Jobs/Ingestion for status.",
+            fg_name,
+        )
 
 
 if __name__ == "__main__":

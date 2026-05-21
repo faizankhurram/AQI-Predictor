@@ -144,8 +144,11 @@ jupyter notebook notebooks/eda_quick.ipynb
 | `HOPSWORKS_API_KEY` | Hopsworks Serverless API key |
 | `HOPSWORKS_PROJECT` | Hopsworks project name |
 | `HOPSWORKS_HOST` | API host (`eu-west.cloud.hopsworks.ai`; do not use `c.app.hopsworks.ai`) |
+| `HOPSWORKS_WAIT_FOR_JOB` | Set to `0` in CI so insert does not block on slow Hopsworks jobs (GitHub Actions sets this). Use `1` locally to wait until ingestion finishes. |
 
 Copy `.env.example` to `.env` and fill in the values. Never commit `.env` to git.
+
+If a feature workflow shows **"The operation was canceled"** after `Inserting N rows…`, it usually hit the job time limit while waiting on Hopsworks. Push the latest workflow (uses `HOPSWORKS_WAIT_FOR_JOB=0`) and run again; confirm ingestion under **Feature Group → Jobs** in Hopsworks.
 
 ---
 
