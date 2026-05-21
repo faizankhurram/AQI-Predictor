@@ -1,5 +1,6 @@
 """
-Trains Ridge and RandomForest regressors on the backfilled feature data.
+Trains Linear Regression, Ridge, RandomForest, and XGBoost regressors on the
+backfilled feature data.
 Uses a MultiOutputRegressor wrapper so one model handles all three forecast
 horizons (+24h, +48h, +72h) simultaneously.
 """
@@ -10,11 +11,12 @@ import logging
 import numpy as np
 import pandas as pd
 import joblib
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
+from xgboost import XGBRegressor
 
 from src.features.build_features import get_feature_columns, get_target_columns
 from src.models.metrics import evaluate_all_horizons, save_metrics
@@ -23,6 +25,13 @@ log = logging.getLogger(__name__)
 
 HORIZON_LABELS = ["aqi_t_plus_24h", "aqi_t_plus_48h", "aqi_t_plus_72h"]
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models_artifacts")
+
+
+def build_linear_pipeline() -> Pipeline:
+    return Pipeline([
+        ("scaler", StandardScaler()),
+        ("model", MultiOutputRegressor(LinearRegression())),
+    ])
 
 
 def time_split(df: pd.DataFrame, test_days: int = 14):
@@ -49,9 +58,27 @@ def build_rf_pipeline() -> Pipeline:
     ])
 
 
+def build_xgb_pipeline() -> Pipeline:
+    return Pipeline([
+        ("model", MultiOutputRegressor(
+            XGBRegressor(
+                n_estimators=300,
+                max_depth=4,
+                learning_rate=0.05,
+                subsample=0.9,
+                colsample_bytree=0.9,
+                objective="reg:squarederror",
+                random_state=42,
+                n_jobs=-1,
+                tree_method="hist",
+            )
+        )),
+    ])
+
+
 def train_and_evaluate(df: pd.DataFrame, test_days: int = 14) -> dict:
     """
-    Trains both models, evaluates on time-split holdout, and saves the
+    Trains candidate models, evaluates on time-split holdout, and saves the
     best model to disk.  Returns a dict with results + best model info.
     """
     feature_cols = get_feature_columns()
@@ -66,8 +93,10 @@ def train_and_evaluate(df: pd.DataFrame, test_days: int = 14) -> dict:
     Y_test = test[target_cols].values
 
     candidates = {
+        "linear_regression": build_linear_pipeline(),
         "ridge": build_ridge_pipeline(),
         "random_forest": build_rf_pipeline(),
+        "xgboost": build_xgb_pipeline(),
     }
 
     results = {}

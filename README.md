@@ -62,6 +62,9 @@ python src/pipelines/training_pipeline.py --csv data/backfill.csv
 python src/pipelines/training_pipeline.py --csv data/backfill.csv --with-tf
 ```
 
+The default sklearn training set compares Linear Regression, Ridge, Random Forest,
+and XGBoost, then registers the lowest-RMSE model in MongoDB GridFS.
+
 ### 5. Launch the dashboard
 
 ```bash

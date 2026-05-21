@@ -67,12 +67,14 @@ Each hourly row in the MongoDB feature collection contains:
 
 ## 5. Models and Results
 
-Two models trained on the multi-output regression task (predict AQI at +24h, +48h, +72h simultaneously):
+Four models trained on the multi-output regression task (predict AQI at +24h, +48h, +72h simultaneously):
 
 | Model | Avg RMSE | Avg MAE | Avg R² |
 |-------|----------|---------|--------|
+| Linear Regression | _fill after training_ | _fill_ | _fill_ |
 | Ridge Regression | _fill after training_ | _fill_ | _fill_ |
 | Random Forest | _fill after training_ | _fill_ | _fill_ |
+| XGBoost | _fill after training_ | _fill_ | _fill_ |
 
 > Best model registered in MongoDB GridFS model registry. See `models_artifacts/metrics.json` for full per-horizon breakdown.
 
