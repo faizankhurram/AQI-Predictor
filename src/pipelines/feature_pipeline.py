@@ -90,6 +90,17 @@ def run():
         description="Hourly AQI features for Karachi",
     )
 
+    # If a previous materialization job is still running, wait for it before inserting.
+    # This avoids the "already running" warning that blocks the new job from starting.
+    try:
+        state = fg.materialization_job.get_state()
+        if state in ("RUNNING", "INITIALIZING", "CONVERTING_DATASET"):
+            log.info("Waiting for existing materialization job to finish (state=%s)...", state)
+            fg.materialization_job.get_final_state()
+            log.info("Previous materialization job finished.")
+    except Exception as exc:
+        log.debug("Could not check materialization job state: %s", exc)
+
     # Serverless materialization can exceed GitHub's job limit if we block on the job.
     wait_for_job = os.environ.get("HOPSWORKS_WAIT_FOR_JOB", "1").strip().lower() not in (
         "0",
