@@ -43,6 +43,7 @@ jobs:
         run: |
           test -f src/data/openmeteo_client.py
           python -c "from src.data.openmeteo_client import fetch_combined; print('import OK:', fetch_combined.__module__)"
+          python -c "import confluent_kafka; print('confluent_kafka OK')"
 
       - name: Run feature pipeline
         env:

@@ -170,8 +170,9 @@ Serverless backend is **4.7.x** — use matching client and cloud API host:
 
 ```bash
 pip install -r requirements.txt
-pip install "hopsworks==4.7.5"
 ```
+
+`requirements.txt` includes `hopsworks==4.7.5` and `confluent-kafka` (required for Feature Group `insert` from GitHub Actions).
 
 Set in `.env`:
 
