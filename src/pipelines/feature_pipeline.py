@@ -20,8 +20,8 @@ from dotenv import load_dotenv
 import yaml
 
 try:
-    from src.data.openmeteo_client import fetch_combined
-    from src.features.build_features import build_features, drop_incomplete_rows
+    from src.data.openmeteo_client import fetch_for_live_ingest
+    from src.features.build_features import build_features, drop_incomplete_features
 except ModuleNotFoundError as exc:
     _data_dir = os.path.join(_REPO_ROOT, "src", "data")
     raise SystemExit(
@@ -33,6 +33,9 @@ except ModuleNotFoundError as exc:
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+
+# Only upsert recent hours (dedupe on timestamp still applies for overlaps).
+INSERT_LOOKBACK_HOURS = 48
 
 
 def load_config() -> dict:
@@ -50,26 +53,29 @@ def run():
     project_name = os.environ["HOPSWORKS_PROJECT"]
     api_key = os.environ["HOPSWORKS_API_KEY"]
 
-    # Fetch last 72 h (guarantees lag features are calculable for last 24 h)
-    end_dt = datetime.utcnow()
-    start_dt = end_dt - timedelta(hours=72)
-    start_date = start_dt.strftime("%Y-%m-%d")
-    end_date = end_dt.strftime("%Y-%m-%d")
-
-    log.info("Fetching Open-Meteo data %s → %s", start_date, end_date)
+    log.info("Fetching multi-day Open-Meteo window for lag features (lookback=5 days)")
     try:
-        raw = fetch_combined(lat, lon, start_date, end_date, is_historical=False)
+        raw = fetch_for_live_ingest(lat, lon, lookback_days=5)
     except Exception as exc:
         log.error("Open-Meteo fetch failed: %s", exc)
         sys.exit(1)
 
-    log.info("Raw rows fetched: %d", len(raw))
+    log.info("Raw rows fetched: %d (%s → %s)", len(raw), raw["timestamp"].min(), raw["timestamp"].max())
     featured = build_features(raw)
-    clean = drop_incomplete_rows(featured)
-    log.info("Rows after feature build + drop nulls: %d", len(clean))
+    # Ingest: require features only (targets need future hours; 24-row forecast window drops all rows).
+    clean = drop_incomplete_features(featured)
+    log.info("Rows with complete features: %d", len(clean))
 
     if clean.empty:
-        log.warning("No complete rows to insert — skipping Feature Store write.")
+        log.warning("No rows with complete features — skipping Feature Store write.")
+        return
+
+    cutoff = pd.Timestamp.utcnow().tz_localize(None) - timedelta(hours=INSERT_LOOKBACK_HOURS)
+    to_insert = clean[clean["timestamp"] >= cutoff].copy()
+    log.info("Rows to insert (last %dh): %d", INSERT_LOOKBACK_HOURS, len(to_insert))
+
+    if to_insert.empty:
+        log.warning("No rows in insert window — skipping Feature Store write.")
         return
 
     from src.utils.hopsworks_login import login_hopsworks
@@ -84,9 +90,8 @@ def run():
         description="Hourly AQI features for Karachi",
     )
 
-    # Hopsworks deduplicates on primary key on insert
-    log.info("Inserting %d rows into Feature Group '%s'", len(clean), fg_name)
-    fg.insert(clean, write_options={"wait_for_job": True})
+    log.info("Inserting %d rows into Feature Group '%s'", len(to_insert), fg_name)
+    fg.insert(to_insert, write_options={"wait_for_job": True})
     log.info("Done.")
 
 

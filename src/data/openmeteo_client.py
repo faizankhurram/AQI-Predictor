@@ -119,6 +119,35 @@ def fetch_combined(
     return merged
 
 
+def fetch_for_live_ingest(lat: float, lon: float, lookback_days: int = 5) -> pd.DataFrame:
+    """
+    Fetch enough history for lag-24h features, then merge today's forecast slice.
+
+    Air-quality API often returns only ~24h when using a short forecast window; we pull
+    multi-day historical AQ + archive weather, then append today from forecast.
+    """
+    end_dt = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=lookback_days)
+    start_date = start_dt.strftime("%Y-%m-%d")
+    end_date = end_dt.strftime("%Y-%m-%d")
+    yesterday = (end_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    hist = fetch_combined(lat, lon, start_date, yesterday, is_historical=True)
+    frames = [hist]
+
+    try:
+        today = fetch_combined(lat, lon, end_date, end_date, is_historical=False)
+        if not today.empty:
+            frames.append(today)
+    except requests.RequestException:
+        pass
+
+    merged = pd.concat(frames, ignore_index=True)
+    merged = merged.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+    merged["date"] = merged["timestamp"].dt.date.astype(str)
+    return merged.reset_index(drop=True)
+
+
 def fetch_last_n_hours(lat: float, lon: float, n_hours: int = 72) -> pd.DataFrame:
     """
     Convenience wrapper: fetch the last n_hours of combined data.
@@ -128,6 +157,6 @@ def fetch_last_n_hours(lat: float, lon: float, n_hours: int = 72) -> pd.DataFram
     start_dt = end_dt - timedelta(hours=n_hours)
     start_date = start_dt.strftime("%Y-%m-%d")
     end_date = end_dt.strftime("%Y-%m-%d")
-    df = fetch_combined(lat, lon, start_date, end_date, is_historical=False)
+    df = fetch_for_live_ingest(lat, lon, lookback_days=max(3, (n_hours // 24) + 2))
     cutoff = pd.Timestamp.utcnow().tz_localize(None) - timedelta(hours=n_hours)
     return df[df["timestamp"] >= cutoff].reset_index(drop=True)

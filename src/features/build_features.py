@@ -93,8 +93,15 @@ def get_target_columns() -> list[str]:
     return [f"aqi_t_plus_{h}h" for h in HORIZON_HOURS]
 
 
+def drop_incomplete_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove rows where input features are NaN (for hourly FG ingest; targets may be NaN)."""
+    cols = get_feature_columns()
+    existing = [c for c in cols if c in df.columns]
+    return df.dropna(subset=existing).reset_index(drop=True)
+
+
 def drop_incomplete_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove rows where any feature or target is NaN (lags + lead targets)."""
+    """Remove rows where any feature or target is NaN (lags + lead targets). Used for training."""
     cols = get_feature_columns() + get_target_columns()
     existing = [c for c in cols if c in df.columns]
     return df.dropna(subset=existing).reset_index(drop=True)
