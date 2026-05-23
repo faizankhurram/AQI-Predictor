@@ -94,6 +94,13 @@ def upsert_features(df: pd.DataFrame, cfg: dict | None = None) -> int:
     return len(operations)
 
 
+def delete_feature_rows_after(timestamp: pd.Timestamp | datetime, cfg: dict | None = None) -> int:
+    """Delete feature rows later than the provided local-naive timestamp."""
+    collection = get_feature_collection(cfg)
+    result = collection.delete_many({"timestamp": {"$gt": _to_mongo_value(timestamp)}})
+    return result.deleted_count
+
+
 def read_features(cfg: dict | None = None) -> pd.DataFrame:
     """Read all feature rows from MongoDB as a timestamp-sorted DataFrame."""
     collection = get_feature_collection(cfg)

@@ -14,6 +14,7 @@ if _REPO_ROOT not in sys.path:
 
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -22,7 +23,7 @@ import yaml
 try:
     from src.data.openmeteo_client import fetch_for_live_ingest
     from src.features.build_features import build_features, drop_incomplete_features
-    from src.utils.mongo_store import upsert_features
+    from src.utils.mongo_store import delete_feature_rows_after, upsert_features
 except ModuleNotFoundError as exc:
     _data_dir = os.path.join(_REPO_ROOT, "src", "data")
     raise SystemExit(
@@ -39,6 +40,11 @@ log = logging.getLogger(__name__)
 INSERT_LOOKBACK_HOURS = 48
 
 
+def current_local_hour(timezone_name: str) -> pd.Timestamp:
+    """Return the current local hour as a naive timestamp matching Open-Meteo output."""
+    return pd.Timestamp.now(tz=ZoneInfo(timezone_name)).floor("h").tz_localize(None)
+
+
 def load_config() -> dict:
     cfg_path = os.path.join(os.path.dirname(__file__), "..", "..", "config", "settings.yaml")
     with open(cfg_path) as f:
@@ -49,6 +55,7 @@ def run():
     cfg = load_config()
     lat = cfg["location"]["latitude"]
     lon = cfg["location"]["longitude"]
+    timezone_name = cfg["location"].get("timezone", "Asia/Karachi")
     collection_name = cfg["mongodb"]["feature_collection"]
 
     log.info("Fetching multi-day Open-Meteo window for lag features (lookback=5 days)")
@@ -68,13 +75,24 @@ def run():
         log.warning("No rows with complete features — skipping Feature Store write.")
         return
 
-    cutoff = pd.Timestamp.utcnow().tz_localize(None) - timedelta(hours=INSERT_LOOKBACK_HOURS)
-    to_insert = clean[clean["timestamp"] >= cutoff].copy()
-    log.info("Rows to insert (last %dh): %d", INSERT_LOOKBACK_HOURS, len(to_insert))
+    upper_bound = current_local_hour(timezone_name)
+    cutoff = upper_bound - timedelta(hours=INSERT_LOOKBACK_HOURS)
+    to_insert = clean[(clean["timestamp"] >= cutoff) & (clean["timestamp"] <= upper_bound)].copy()
+    log.info(
+        "Rows to insert (%s → %s, timezone=%s): %d",
+        cutoff,
+        upper_bound,
+        timezone_name,
+        len(to_insert),
+    )
 
     if to_insert.empty:
         log.warning("No rows in insert window — skipping Feature Store write.")
         return
+
+    deleted_future = delete_feature_rows_after(upper_bound, cfg)
+    if deleted_future:
+        log.info("Deleted %d future-dated MongoDB rows after %s.", deleted_future, upper_bound)
 
     log.info("Upserting %d rows into MongoDB collection '%s'", len(to_insert), collection_name)
     upserted = upsert_features(to_insert, cfg)
