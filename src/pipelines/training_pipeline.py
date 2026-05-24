@@ -26,7 +26,12 @@ import pandas as pd
 from dotenv import load_dotenv
 import yaml
 from src.models.sklearn_trainer import train_and_evaluate, time_split, MODELS_DIR
-from src.features.build_features import get_feature_columns, get_target_columns, drop_incomplete_rows
+from src.features.build_features import (
+    get_feature_columns,
+    get_target_columns,
+    drop_incomplete_rows,
+    prepare_training_frame,
+)
 from src.utils.mongo_store import DEFAULT_MODEL_NAME, read_features, save_model_artifact
 
 load_dotenv()
@@ -77,11 +82,20 @@ def run(csv_path: str | None = None, with_tf: bool = False, test_days: int = 14)
     if csv_path:
         log.info("Loading data from local CSV: %s", csv_path)
         df = pd.read_csv(csv_path, parse_dates=["timestamp"])
-        df = drop_incomplete_rows(df)
+        df = prepare_training_frame(df)
     else:
         log.info("Loading data from MongoDB feature store...")
         df = load_from_mongodb(cfg)
-        df = drop_incomplete_rows(df)
+        log.info("MongoDB documents loaded: %d", len(df))
+        df = prepare_training_frame(df)
+
+    if df.empty:
+        raise RuntimeError(
+            "No complete training rows after feature preparation. "
+            "Run backfill (python src/pipelines/backfill.py --days 90) or ensure "
+            "the feature collection has timestamp, pm2_5, weather columns, and enough history "
+            "for 72h targets."
+        )
 
     log.info("Dataset: %d rows, %s → %s",
              len(df), df["timestamp"].min(), df["timestamp"].max())

@@ -87,6 +87,13 @@ def train_and_evaluate(df: pd.DataFrame, test_days: int = 14) -> dict:
     train, test = time_split(df, test_days=test_days)
     log.info("Train: %d rows  |  Test: %d rows", len(train), len(test))
 
+    if len(train) == 0 or len(test) == 0:
+        raise ValueError(
+            f"Not enough data for a {test_days}-day holdout "
+            f"(train={len(train)}, test={len(test)}). "
+            "Run backfill to load more history or reduce --test-days."
+        )
+
     X_train_df = train[feature_cols].copy()
     X_test_df = test[feature_cols].copy()
     # Fill any residual NaN/inf with column median (robust to AQI spike outliers)

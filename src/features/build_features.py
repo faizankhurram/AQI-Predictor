@@ -134,4 +134,72 @@ def drop_incomplete_rows(df: pd.DataFrame) -> pd.DataFrame:
     """Remove rows where any feature or target is NaN (lags + lead targets). Used for training."""
     cols = get_feature_columns() + get_target_columns()
     existing = [c for c in cols if c in df.columns]
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Training frame is missing required columns: {missing}. "
+            "Run prepare_training_frame() or backfill.py after a feature-schema change."
+        )
     return df.dropna(subset=existing).reset_index(drop=True)
+
+
+RAW_INPUT_COLUMNS = [
+    "timestamp",
+    "pm2_5",
+    "pm10",
+    "no2",
+    "o3",
+    "temperature_2m",
+    "relative_humidity_2m",
+    "wind_speed_10m",
+]
+
+
+def _pm25_needs_uncalibration(pm2_5: pd.Series, aqi_us: pd.Series) -> bool:
+    """
+    Return True when stored pm2_5 already includes the 1.42 calibration factor
+    (so build_features should not multiply again).
+    """
+    sample = pd.DataFrame({"pm2_5": pm2_5, "aqi_us": aqi_us}).dropna()
+    if len(sample) < 20:
+        return False
+    pm = sample["pm2_5"]
+    aqi = sample["aqi_us"]
+    err_if_raw = (compute_aqi_us(pm) - aqi).abs().median()
+    err_if_cal = (compute_aqi_us(pm * PM25_CALIBRATION_FACTOR) - aqi).abs().median()
+    return err_if_cal < err_if_raw
+
+
+def prepare_training_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build a training-ready frame from MongoDB/CSV rows.
+
+    Recomputes engineered features from raw AQ + weather columns when the stored
+    schema is stale (e.g. after adding cyclic time features). This avoids 0-row
+    training sets when old MongoDB documents lack new feature columns.
+    """
+    if df.empty:
+        return df
+
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
+
+    if not all(c in df.columns for c in RAW_INPUT_COLUMNS):
+        return drop_incomplete_rows(df)
+
+    feat_cols = get_feature_columns()
+    needs_rebuild = any(c not in df.columns for c in feat_cols)
+    if not needs_rebuild:
+        nan_rate = df[feat_cols].isna().mean().max()
+        needs_rebuild = nan_rate > 0.05
+
+    if not needs_rebuild:
+        return drop_incomplete_rows(df)
+
+    base = df[RAW_INPUT_COLUMNS].copy()
+    if "aqi_us" in df.columns and _pm25_needs_uncalibration(df["pm2_5"], df["aqi_us"]):
+        base["pm2_5"] = base["pm2_5"] / PM25_CALIBRATION_FACTOR
+
+    featured = build_features(base)
+    return drop_incomplete_rows(featured)
