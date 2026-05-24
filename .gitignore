@@ -1,13 +1,36 @@
-# Environment
+# Environment & secrets
 .env
+.env.*
+!.env.example
+
+# Virtual environments (use .venv311 locally — do not commit)
 venv/
+.venv/
+.venv311/
+.venv*/
+
+# Python build / cache
 *.egg-info/
 __pycache__/
 *.pyc
 *.pyo
 .Python
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Data (large files — commit only schema docs)
+# Local-only dev utilities (not part of CI/CD)
+show_model_metrics.py
+metrics_report.json
+debug-*.log
+
+# Data & model artifacts (regenerate locally or via pipelines)
+data/*.csv
+data/*.parquet
 models_artifacts/
 
 # Jupyter

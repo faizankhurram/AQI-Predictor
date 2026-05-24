@@ -26,10 +26,10 @@ MongoDB Atlas setup:
 git clone <your-repo-url>
 cd "AQI Predictor"
 
-# Create virtual environment
-python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # macOS/Linux
+# Create virtual environment (Python 3.11+)
+py -3.12 -m venv .venv311
+.\.venv311\Scripts\Activate.ps1   # Windows PowerShell
+# source .venv311/bin/activate    # macOS/Linux
 
 # Install dependencies
 pip install -r requirements.txt
@@ -100,8 +100,9 @@ jupyter notebook notebooks/eda_quick.ipynb
 │   ├── feature_pipeline.yml   # Runs every hour
 │   └── training_pipeline.yml  # Runs daily at 02:00 UTC
 ├── config/settings.yaml        # Karachi lat/lon, thresholds, MongoDB names
-├── data/                       # Local CSV backup (git-ignored)
+├── data/                       # Local CSV backup (git-ignored; see data/.gitkeep)
 ├── models_artifacts/           # Saved .pkl + metrics.json (git-ignored)
+├── show_model_metrics.py       # Local metrics viewer (git-ignored)
 ├── notebooks/eda_quick.ipynb
 ├── report/report.md
 ├── requirements.txt
