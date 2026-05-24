@@ -11,7 +11,7 @@ from typing import Any
 import gridfs
 import joblib
 import pandas as pd
-from pymongo import MongoClient, ReplaceOne
+from pymongo import MongoClient, UpdateOne
 from pymongo.collection import Collection
 from pymongo.database import Database
 
@@ -86,7 +86,14 @@ def upsert_features(df: pd.DataFrame, cfg: dict | None = None) -> int:
         timestamp = record.get("timestamp")
         if timestamp is None:
             continue
-        operations.append(ReplaceOne({"timestamp": timestamp}, record, upsert=True))
+        # Use $set so fields added by later pipeline runs are preserved,
+        # rather than replacing the whole document (ReplaceOne would wipe
+        # any fields not present in the current batch).
+        operations.append(UpdateOne(
+            {"timestamp": timestamp},
+            {"$set": record},
+            upsert=True,
+        ))
 
     if not operations:
         return 0

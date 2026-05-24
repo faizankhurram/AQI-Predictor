@@ -87,9 +87,16 @@ def train_and_evaluate(df: pd.DataFrame, test_days: int = 14) -> dict:
     train, test = time_split(df, test_days=test_days)
     log.info("Train: %d rows  |  Test: %d rows", len(train), len(test))
 
-    X_train = train[feature_cols].values
+    X_train_df = train[feature_cols].copy()
+    X_test_df = test[feature_cols].copy()
+    # Fill any residual NaN/inf with column median (robust to AQI spike outliers)
+    medians = X_train_df.median()
+    X_train_df = X_train_df.fillna(medians).replace([np.inf, -np.inf], 0.0)
+    X_test_df = X_test_df.fillna(medians).replace([np.inf, -np.inf], 0.0)
+
+    X_train = X_train_df.values
     Y_train = train[target_cols].values
-    X_test = test[feature_cols].values
+    X_test = X_test_df.values
     Y_test = test[target_cols].values
 
     candidates = {
