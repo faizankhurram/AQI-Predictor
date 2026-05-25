@@ -75,6 +75,32 @@ def dataframe_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
     return records
 
 
+def dataframe_to_ingest_records(
+    df: pd.DataFrame,
+    *,
+    omit_null_targets: bool = True,
+    target_columns: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Build MongoDB $set payloads for feature ingest.
+
+    When omit_null_targets is True, future AQI labels that are null (recent hours)
+    are not sent to MongoDB so hourly sync does not wipe targets from backfill rows.
+    """
+    if target_columns is None:
+        target_columns = ("aqi_t_plus_24h", "aqi_t_plus_48h", "aqi_t_plus_72h")
+
+    records: list[dict[str, Any]] = []
+    for row in df.to_dict(orient="records"):
+        record = {key: _to_mongo_value(value) for key, value in row.items()}
+        if omit_null_targets:
+            for col in target_columns:
+                if col in record and record[col] is None:
+                    del record[col]
+        records.append(record)
+    return records
+
+
 def upsert_features(df: pd.DataFrame, cfg: dict | None = None) -> int:
     """Upsert feature rows by timestamp and return the number of rows submitted."""
     if df.empty:
@@ -82,7 +108,7 @@ def upsert_features(df: pd.DataFrame, cfg: dict | None = None) -> int:
 
     collection = get_feature_collection(cfg)
     operations = []
-    for record in dataframe_to_records(df):
+    for record in dataframe_to_ingest_records(df, omit_null_targets=True):
         timestamp = record.get("timestamp")
         if timestamp is None:
             continue

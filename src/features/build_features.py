@@ -73,20 +73,35 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # --- Weather interaction: smog index captures Karachi winter particulate trapping ---
     wind = df.get("wind_speed_10m", pd.Series(0.0, index=df.index))
     humidity = df.get("relative_humidity_2m", pd.Series(0.0, index=df.index))
+    temp = df.get("temperature_2m", pd.Series(0.0, index=df.index))
     df["smog_index"] = (humidity / (wind + 1)) * df["is_winter"]
+    # Dispersion: dry + windy conditions reduce trapped pollution
+    df["dispersion_index"] = wind * (100 - humidity.clip(0, 100)) / 100
+    # Heat–humidity stress (stagnant hot humid periods in Karachi summers)
+    df["heat_index"] = temp * humidity / 100
+
+    # Cyclic day-of-week (replaces linear day_of_week for models)
+    dow = df["timestamp"].dt.dayofweek
+    df["dow_sin"] = np.sin(2 * np.pi * dow / 7)
+    df["dow_cos"] = np.cos(2 * np.pi * dow / 7)
+
+    # Log-scaled coarse particulates (stabilizes spikes)
+    if "pm10" in df.columns:
+        df["log_pm10"] = np.log1p(df["pm10"].clip(lower=0))
 
     # --- Lag features ---
     df["aqi_lag_1h"] = df["aqi_us"].shift(1)
     df["aqi_lag_24h"] = df["aqi_us"].shift(24)
 
-    # --- Rolling average ---
+    # --- Rolling averages ---
     df["aqi_rolling_6h"] = df["aqi_us"].rolling(window=6, min_periods=1).mean()
+    df["aqi_rolling_24h"] = df["aqi_us"].rolling(window=24, min_periods=1).mean()
 
-    # --- Change-rate features ---
-    df["aqi_change_1h"] = df["aqi_us"].diff(1)
-    df["aqi_change_24h"] = df["aqi_us"].diff(24)
+    # --- Change-rate features (clipped to limit outlier leverage) ---
+    df["aqi_change_1h"] = df["aqi_us"].diff(1).clip(-80, 80)
+    df["aqi_change_24h"] = df["aqi_us"].diff(24).clip(-120, 120)
     lag_2h = df["aqi_us"].shift(2)
-    df["aqi_change_rate"] = (df["aqi_lag_1h"] - lag_2h) / (lag_2h + 0.1)
+    df["aqi_change_rate"] = ((df["aqi_lag_1h"] - lag_2h) / (lag_2h + 0.1)).clip(-1.5, 1.5)
 
     # Target labels (future AQI, shifted backwards = look-ahead)
     for h in HORIZON_HOURS:
@@ -107,16 +122,58 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_feature_columns() -> list[str]:
-    """Ordered list of input feature columns used by the model."""
+    """
+    Ordered list of input feature columns used by the model.
+
+    pm2_5 is intentionally excluded — it is almost collinear with aqi_us and lag
+    features, which hurts linear models and inflates variance on tree models.
+    """
     base = [
-        "pm2_5", "pm10", "no2", "o3",
+        "pm10", "log_pm10", "no2", "o3",
         "temperature_2m", "relative_humidity_2m", "wind_speed_10m",
-        "hour_sin", "hour_cos", "day_of_week", "is_winter",
-        "smog_index",
-        "aqi_lag_1h", "aqi_lag_24h", "aqi_rolling_6h",
+        "hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_winter",
+        "smog_index", "dispersion_index", "heat_index",
+        "aqi_lag_1h", "aqi_lag_24h", "aqi_rolling_6h", "aqi_rolling_24h",
         "aqi_change_1h", "aqi_change_24h", "aqi_change_rate",
     ]
     return base
+
+
+# Columns winsorized from train quantiles before model fit
+WINSORIZE_FEATURE_COLS = ["aqi_change_1h", "aqi_change_24h", "aqi_change_rate", "no2", "o3", "pm10"]
+WINSOR_QUANTILES = (0.02, 0.98)
+AQI_MIN, AQI_MAX = 0.0, 500.0
+
+
+def preprocess_training_splits(
+    train: pd.DataFrame,
+    test: pd.DataFrame,
+    feature_cols: list[str],
+    target_cols: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Training-only cleaning: winsorize volatile columns, fill residual NaNs,
+    and clip AQI targets to the valid EPA range.
+    """
+    train = train.copy()
+    test = test.copy()
+
+    for col in WINSORIZE_FEATURE_COLS:
+        if col not in train.columns:
+            continue
+        lo, hi = train[col].quantile(WINSOR_QUANTILES[0]), train[col].quantile(WINSOR_QUANTILES[1])
+        train[col] = train[col].clip(lo, hi)
+        test[col] = test[col].clip(lo, hi)
+
+    medians = train[feature_cols].median()
+    train[feature_cols] = train[feature_cols].fillna(medians).replace([np.inf, -np.inf], 0.0)
+    test[feature_cols] = test[feature_cols].fillna(medians).replace([np.inf, -np.inf], 0.0)
+
+    for col in target_cols:
+        train[col] = train[col].clip(AQI_MIN, AQI_MAX)
+        test[col] = test[col].clip(AQI_MIN, AQI_MAX)
+
+    return train, test
 
 
 def get_target_columns() -> list[str]:

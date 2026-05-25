@@ -14,11 +14,15 @@ import joblib
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.multioutput import MultiOutputRegressor
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import RobustScaler
 from sklearn.pipeline import Pipeline
 from xgboost import XGBRegressor
 
-from src.features.build_features import get_feature_columns, get_target_columns
+from src.features.build_features import (
+    get_feature_columns,
+    get_target_columns,
+    preprocess_training_splits,
+)
 from src.models.metrics import evaluate_all_horizons, save_metrics
 
 log = logging.getLogger(__name__)
@@ -29,7 +33,7 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models_artifac
 
 def build_linear_pipeline() -> Pipeline:
     return Pipeline([
-        ("scaler", StandardScaler()),
+        ("scaler", RobustScaler()),
         ("model", MultiOutputRegressor(LinearRegression())),
     ])
 
@@ -45,8 +49,8 @@ def time_split(df: pd.DataFrame, test_days: int = 14):
 
 def build_ridge_pipeline() -> Pipeline:
     return Pipeline([
-        ("scaler", StandardScaler()),
-        ("model", MultiOutputRegressor(Ridge(alpha=1.0))),
+        ("scaler", RobustScaler()),
+        ("model", MultiOutputRegressor(Ridge(alpha=2.0))),
     ])
 
 
@@ -94,16 +98,11 @@ def train_and_evaluate(df: pd.DataFrame, test_days: int = 14) -> dict:
             "Run backfill to load more history or reduce --test-days."
         )
 
-    X_train_df = train[feature_cols].copy()
-    X_test_df = test[feature_cols].copy()
-    # Fill any residual NaN/inf with column median (robust to AQI spike outliers)
-    medians = X_train_df.median()
-    X_train_df = X_train_df.fillna(medians).replace([np.inf, -np.inf], 0.0)
-    X_test_df = X_test_df.fillna(medians).replace([np.inf, -np.inf], 0.0)
+    train, test = preprocess_training_splits(train, test, feature_cols, target_cols)
 
-    X_train = X_train_df.values
+    X_train = train[feature_cols].values
     Y_train = train[target_cols].values
-    X_test = X_test_df.values
+    X_test = test[feature_cols].values
     Y_test = test[target_cols].values
 
     candidates = {
