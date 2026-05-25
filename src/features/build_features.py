@@ -3,12 +3,18 @@ Transforms raw merged DataFrame (air quality + weather) into model-ready feature
 All operations are vectorised; no row-wise apply loops.
 """
 
+import json
+import os
+
 import pandas as pd
 import numpy as np
 
 
 HORIZON_HOURS = [24, 48, 72]
 LAG_HOURS = [1, 24]
+ROLLING_WINDOW_24H = 24
+POLLUTANT_ROLL_COLS = ["pm2_5", "pm10", "no2", "o3"]
+DEFAULT_CORRELATION_THRESHOLD = 0.85
 
 # Sensor/satellite correction factor validated for South Asian low-cost sensors
 # (consistent with peer-reviewed Karachi air quality studies).
@@ -69,9 +75,11 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df["day_of_week"] = df["timestamp"].dt.dayofweek
     month = df["timestamp"].dt.month
     df["is_winter"] = month.isin([11, 12, 1, 2]).astype(int)
+    df["month_sin"] = np.sin(2 * np.pi * month / 12)
+    df["month_cos"] = np.cos(2 * np.pi * month / 12)
 
     # --- Weather interaction: smog index captures Karachi winter particulate trapping ---
-    wind = df.get("wind_speed_10m", pd.Series(0.0, index=df.index))
+    wind = df.get("wind_speed_10m", pd.Series(0.0, index=df.index)).fillna(0)
     humidity = df.get("relative_humidity_2m", pd.Series(0.0, index=df.index))
     temp = df.get("temperature_2m", pd.Series(0.0, index=df.index))
     df["smog_index"] = (humidity / (wind + 1)) * df["is_winter"]
@@ -88,6 +96,22 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # Log-scaled coarse particulates (stabilizes spikes)
     if "pm10" in df.columns:
         df["log_pm10"] = np.log1p(df["pm10"].clip(lower=0))
+
+    # Wind direction → U/V components (meteorological: direction wind comes from)
+    if "wind_direction_10m" in df.columns:
+        wd_rad = np.deg2rad(pd.to_numeric(df["wind_direction_10m"], errors="coerce").fillna(0))
+        df["wind_u"] = -wind * np.sin(wd_rad)
+        df["wind_v"] = -wind * np.cos(wd_rad)
+    else:
+        df["wind_u"] = 0.0
+        df["wind_v"] = 0.0
+
+    # 24-hour rolling means per pollutant (strong persistence signal for AQI)
+    for col in POLLUTANT_ROLL_COLS:
+        if col in df.columns:
+            df[f"{col}_roll_24h"] = (
+                df[col].rolling(window=ROLLING_WINDOW_24H, min_periods=ROLLING_WINDOW_24H).mean()
+            )
 
     # --- Lag features ---
     df["aqi_lag_1h"] = df["aqi_us"].shift(1)
@@ -128,10 +152,14 @@ def get_feature_columns() -> list[str]:
     pm2_5 is intentionally excluded — it is almost collinear with aqi_us and lag
     features, which hurts linear models and inflates variance on tree models.
     """
+    pollutant_rolls = [f"{c}_roll_24h" for c in POLLUTANT_ROLL_COLS]
     base = [
         "pm10", "log_pm10", "no2", "o3",
+        *pollutant_rolls,
         "temperature_2m", "relative_humidity_2m", "wind_speed_10m",
-        "hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_winter",
+        "wind_u", "wind_v",
+        "hour_sin", "hour_cos", "month_sin", "month_cos",
+        "dow_sin", "dow_cos", "is_winter",
         "smog_index", "dispersion_index", "heat_index",
         "aqi_lag_1h", "aqi_lag_24h", "aqi_rolling_6h", "aqi_rolling_24h",
         "aqi_change_1h", "aqi_change_24h", "aqi_change_rate",
@@ -200,7 +228,7 @@ def drop_incomplete_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df.dropna(subset=existing).reset_index(drop=True)
 
 
-RAW_INPUT_COLUMNS = [
+REQUIRED_RAW_INPUT_COLUMNS = [
     "timestamp",
     "pm2_5",
     "pm10",
@@ -210,6 +238,69 @@ RAW_INPUT_COLUMNS = [
     "relative_humidity_2m",
     "wind_speed_10m",
 ]
+OPTIONAL_RAW_INPUT_COLUMNS = ["wind_direction_10m"]
+RAW_INPUT_COLUMNS = REQUIRED_RAW_INPUT_COLUMNS + OPTIONAL_RAW_INPUT_COLUMNS
+
+
+def prune_correlated_features(
+    train: pd.DataFrame,
+    feature_cols: list[str],
+    target_col: str = "aqi_t_plus_24h",
+    threshold: float = DEFAULT_CORRELATION_THRESHOLD,
+) -> list[str]:
+    """
+    Drop one feature from each pair with |r| >= threshold, keeping the feature
+    with stronger absolute correlation to the target (24h horizon proxy).
+    """
+    kept = [c for c in feature_cols if c in train.columns and train[c].notna().any()]
+    if len(kept) < 2 or target_col not in train.columns:
+        return kept
+
+    while len(kept) >= 2:
+        corr = train[kept + [target_col]].corr().abs()
+        target_corr = corr[target_col]
+
+        worst_pair = None
+        worst_r = threshold
+        for i, a in enumerate(kept):
+            for b in kept[i + 1 :]:
+                r = corr.loc[a, b]
+                if r >= threshold and r >= worst_r:
+                    worst_r = r
+                    worst_pair = (a, b)
+
+        if worst_pair is None:
+            break
+
+        a, b = worst_pair
+        if target_corr[a] >= target_corr[b]:
+            kept.remove(b)
+        else:
+            kept.remove(a)
+
+    return kept
+
+
+def training_feature_cols_path(models_dir: str | None = None) -> str:
+    root = models_dir or os.path.join(os.path.dirname(__file__), "..", "..", "models_artifacts")
+    return os.path.join(root, "feature_cols.json")
+
+
+def save_training_feature_columns(cols: list[str], models_dir: str | None = None) -> str:
+    path = training_feature_cols_path(models_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(cols, f, indent=2)
+    return path
+
+
+def load_training_feature_columns(models_dir: str | None = None) -> list[str]:
+    """Pruned columns from last training run; falls back to full feature list."""
+    path = training_feature_cols_path(models_dir)
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    return get_feature_columns()
 
 
 def _pm25_needs_uncalibration(pm2_5: pd.Series, aqi_us: pd.Series) -> bool:
@@ -242,7 +333,7 @@ def prepare_training_frame(df: pd.DataFrame) -> pd.DataFrame:
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df = df.sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
 
-    if not all(c in df.columns for c in RAW_INPUT_COLUMNS):
+    if not all(c in df.columns for c in REQUIRED_RAW_INPUT_COLUMNS):
         return drop_incomplete_rows(df)
 
     feat_cols = get_feature_columns()
@@ -254,7 +345,8 @@ def prepare_training_frame(df: pd.DataFrame) -> pd.DataFrame:
     if not needs_rebuild:
         return drop_incomplete_rows(df)
 
-    base = df[RAW_INPUT_COLUMNS].copy()
+    base_cols = [c for c in RAW_INPUT_COLUMNS if c in df.columns]
+    base = df[base_cols].copy()
     if "aqi_us" in df.columns and _pm25_needs_uncalibration(df["pm2_5"], df["aqi_us"]):
         base["pm2_5"] = base["pm2_5"] / PM25_CALIBRATION_FACTOR
 

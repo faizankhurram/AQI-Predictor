@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.serving.predict import predict, aqi_label
-from src.features.build_features import get_feature_columns
+from src.features.build_features import load_training_feature_columns
 from src.utils.mongo_store import read_features
 
 log = logging.getLogger(__name__)
@@ -184,7 +184,7 @@ def render_shap(feature_row: dict):
     try:
         import shap
         pipeline = joblib.load(model_path)
-        feature_cols = get_feature_columns()
+        feature_cols = load_training_feature_columns()
         X = pd.DataFrame([feature_row])[feature_cols].values
 
         # Get the underlying estimator (MultiOutputRegressor wrapping RF or Ridge)

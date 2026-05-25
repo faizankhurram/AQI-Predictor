@@ -19,9 +19,19 @@ from dotenv import load_dotenv
 import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from src.features.build_features import get_feature_columns, build_features
+from src.features.build_features import (
+    load_training_feature_columns,
+    get_feature_columns,
+    build_features,
+    training_feature_cols_path,
+)
 from src.data.openmeteo_client import fetch_last_n_hours
-from src.utils.mongo_store import DEFAULT_MODEL_NAME, load_latest_model, read_features
+from src.utils.mongo_store import (
+    DEFAULT_MODEL_NAME,
+    load_latest_model,
+    get_latest_model_document,
+    read_features,
+)
 
 load_dotenv()
 log = logging.getLogger(__name__)
@@ -74,6 +84,22 @@ def get_latest_features_from_local_csv() -> pd.DataFrame:
     return df.sort_values("timestamp")
 
 
+def resolve_feature_columns(cfg: dict, local: bool = False) -> list[str]:
+    """Use pruned columns from training (local JSON or MongoDB registry metadata)."""
+    if os.path.isfile(training_feature_cols_path()):
+        return load_training_feature_columns()
+    if not local:
+        try:
+            model_name = cfg.get("mongodb", {}).get("model_name", DEFAULT_MODEL_NAME)
+            doc = get_latest_model_document(model_name, cfg)
+            cols = (doc.get("metadata") or {}).get("feature_cols")
+            if cols:
+                return cols
+        except Exception as exc:
+            log.warning("Could not load feature_cols from registry: %s", exc)
+    return get_feature_columns()
+
+
 def predict(local: bool = False) -> dict:
     """
     Returns a dict:
@@ -102,7 +128,7 @@ def predict(local: bool = False) -> dict:
             log.warning("MongoDB feature read failed; falling back to live fetch.")
             df = get_latest_features_live(cfg)
 
-    feature_cols = get_feature_columns()
+    feature_cols = resolve_feature_columns(cfg, local=local)
     # Use the most recent complete row
     available = df.dropna(subset=feature_cols)
     if available.empty and local:

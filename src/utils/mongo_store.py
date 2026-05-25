@@ -184,13 +184,18 @@ def save_model_artifact(
     return document
 
 
-def load_latest_model(name: str = DEFAULT_MODEL_NAME, cfg: dict | None = None):
-    """Load the newest registered model artifact from MongoDB GridFS."""
+def get_latest_model_document(name: str = DEFAULT_MODEL_NAME, cfg: dict | None = None) -> dict:
+    """Return the newest model registry document (metadata + GridFS id)."""
     collection = get_model_collection(cfg)
     document = collection.find_one({"name": name}, sort=[("created_at", -1)])
     if not document:
         raise FileNotFoundError(f"No MongoDB model artifact found for '{name}'.")
+    return document
 
+
+def load_latest_model(name: str = DEFAULT_MODEL_NAME, cfg: dict | None = None):
+    """Load the newest registered model artifact from MongoDB GridFS."""
+    document = get_latest_model_document(name, cfg)
     db = get_database(_collection_name(cfg, "database", DEFAULT_DB_NAME))
     fs = gridfs.GridFS(db)
     grid_out = fs.get(document["file_id"])
