@@ -1,0 +1,5 @@
+# Notebook / EDA dependencies (install after requirements.txt)
+-r requirements.txt
+ipykernel>=6.29.0
+jupyter>=1.0.0
+matplotlib>=3.8.0

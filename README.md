@@ -85,10 +85,16 @@ uvicorn src.serving.api:app --reload
 
 ### 7. Run EDA notebook
 
-```bash
+```powershell
+# One-time: notebook kernel + matplotlib
+.\.venv311\Scripts\python.exe -m pip install -r requirements-notebooks.txt
+.\.venv311\Scripts\python.exe -m ipykernel install --user --name aqi-predictor --display-name "AQI Predictor (.venv311)"
+
 jupyter notebook notebooks/eda_quick.ipynb
-# Requires data/backfill.csv to exist first
+# Requires data/backfill.csv to exist first (run backfill.py)
 ```
+
+In Cursor/VS Code: open `notebooks/eda_quick.ipynb` and select kernel **AQI Predictor (.venv311)**. Figures are written to `notebooks/visuals/`.
 
 ---
 

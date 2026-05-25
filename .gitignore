@@ -51,3 +51,7 @@ Thumbs.db
 
 # Report images (regenerate from notebook)
 report/*.png
+
+# EDA notebook exports (regenerate from notebooks/eda_quick.ipynb)
+notebooks/visuals/*.png
+!notebooks/visuals/.gitkeep
