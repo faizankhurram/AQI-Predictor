@@ -27,10 +27,12 @@ from dotenv import load_dotenv
 import yaml
 from src.models.sklearn_trainer import train_and_evaluate, time_split, MODELS_DIR
 from src.features.build_features import (
-    get_feature_columns,
     get_target_columns,
     drop_incomplete_rows,
     prepare_training_frame,
+    load_training_feature_columns,
+    preprocess_training_splits,
+    prune_correlated_features,
 )
 from src.utils.mongo_store import DEFAULT_MODEL_NAME, read_features, save_model_artifact
 
@@ -101,7 +103,12 @@ def run(csv_path: str | None = None, with_tf: bool = False, test_days: int = 14)
              len(df), df["timestamp"].min(), df["timestamp"].max())
 
     # Train sklearn models
-    result = train_and_evaluate(df, test_days=test_days)
+    corr_threshold = cfg.get("data", {}).get(
+        "feature_correlation_threshold", 0.85
+    )
+    result = train_and_evaluate(
+        df, test_days=test_days, correlation_threshold=corr_threshold
+    )
 
     # Register to MongoDB (skip if using CSV-only local dev)
     if not csv_path:
@@ -117,9 +124,12 @@ def run(csv_path: str | None = None, with_tf: bool = False, test_days: int = 14)
             from src.models.sklearn_trainer import time_split
             import numpy as np
 
-            feature_cols = get_feature_columns()
             target_cols = get_target_columns()
             train, test = time_split(df, test_days=test_days)
+            train, test = preprocess_training_splits(
+                train, test, load_training_feature_columns(), target_cols
+            )
+            feature_cols = load_training_feature_columns()
             X_train = train[feature_cols].values
             Y_train = train[target_cols].values
             X_test = test[feature_cols].values

@@ -15,6 +15,7 @@ data:
   forecast_horizons_h: [24, 48, 72]
   lag_hours: [1, 24]
   train_test_split_days: 14
+  feature_correlation_threshold: 0.85
 
 alerts:
   good_max: 50

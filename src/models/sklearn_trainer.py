@@ -22,6 +22,9 @@ from src.features.build_features import (
     get_feature_columns,
     get_target_columns,
     preprocess_training_splits,
+    prune_correlated_features,
+    save_training_feature_columns,
+    DEFAULT_CORRELATION_THRESHOLD,
 )
 from src.models.metrics import evaluate_all_horizons, save_metrics
 
@@ -80,12 +83,16 @@ def build_xgb_pipeline() -> Pipeline:
     ])
 
 
-def train_and_evaluate(df: pd.DataFrame, test_days: int = 14) -> dict:
+def train_and_evaluate(
+    df: pd.DataFrame,
+    test_days: int = 14,
+    correlation_threshold: float = DEFAULT_CORRELATION_THRESHOLD,
+) -> dict:
     """
     Trains candidate models, evaluates on time-split holdout, and saves the
     best model to disk.  Returns a dict with results + best model info.
     """
-    feature_cols = get_feature_columns()
+    all_feature_cols = get_feature_columns()
     target_cols = get_target_columns()
 
     train, test = time_split(df, test_days=test_days)
@@ -98,7 +105,23 @@ def train_and_evaluate(df: pd.DataFrame, test_days: int = 14) -> dict:
             "Run backfill to load more history or reduce --test-days."
         )
 
-    train, test = preprocess_training_splits(train, test, feature_cols, target_cols)
+    train, test = preprocess_training_splits(train, test, all_feature_cols, target_cols)
+
+    feature_cols = prune_correlated_features(
+        train,
+        all_feature_cols,
+        target_col="aqi_t_plus_24h",
+        threshold=correlation_threshold,
+    )
+    dropped = sorted(set(all_feature_cols) - set(feature_cols))
+    if dropped:
+        log.info(
+            "Dropped %d correlated features (|r|>=%.2f): %s",
+            len(dropped),
+            correlation_threshold,
+            dropped,
+        )
+    log.info("Training with %d features", len(feature_cols))
 
     X_train = train[feature_cols].values
     Y_train = train[target_cols].values
@@ -136,6 +159,9 @@ def train_and_evaluate(df: pd.DataFrame, test_days: int = 14) -> dict:
     model_path = os.path.join(MODELS_DIR, "best_model.pkl")
     joblib.dump(best_pipe, model_path)
     log.info("Saved best model → %s", model_path)
+
+    cols_path = save_training_feature_columns(feature_cols, MODELS_DIR)
+    log.info("Saved feature column list → %s", cols_path)
 
     metrics_path = os.path.join(MODELS_DIR, "metrics.json")
     save_metrics(
