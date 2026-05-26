@@ -13,6 +13,15 @@ import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 
+# ── Streamlit Cloud secrets → os.environ (no-op when running locally with .env) ──
+# Streamlit Cloud injects secrets as st.secrets; deeper modules read os.environ.
+try:
+    for _key in ("MONGODB_URI", "MONGODB_DB"):
+        if _key in st.secrets and not os.environ.get(_key):
+            os.environ[_key] = st.secrets[_key]
+except Exception:
+    pass  # st.secrets not available in local dev — .env is used instead
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.serving.predict import predict, aqi_label
 from src.features.build_features import load_training_feature_columns

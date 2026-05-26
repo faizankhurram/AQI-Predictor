@@ -51,8 +51,8 @@ notebooks/.ipynb_checkpoints/
 .DS_Store
 Thumbs.db
 
-# Streamlit
-.streamlit/
+# Streamlit (only ignore real secrets, keep config.toml + example)
+.streamlit/secrets.toml
 
 # Report images (regenerate from notebook)
 report/*.png
