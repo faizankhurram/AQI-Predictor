@@ -552,7 +552,7 @@ def main():
     # Header
     st.markdown(
         '<div style="animation:fadeInDown .5s ease both; margin-bottom:4px;">'
-        '<span style="font-size:2.3rem; font-weight:900;">🌫️ Karachi AQI Forecaster</span>'
+        '<span style="font-size:2.3rem; font-weight:900;">Karachi AQI Forecaster</span>'
         '<span class="live-badge">LIVE</span>'
         '</div>',
         unsafe_allow_html=True,
@@ -632,7 +632,6 @@ def main():
     generated_at = result.get("generated_at", "")
     st.markdown(
         f'<div class="app-footer">'
-        f'<span class="float-emoji">🌫️</span>&nbsp;'
         f'Prediction generated at <strong>{generated_at} UTC</strong>'
         f' &nbsp;·&nbsp; Karachi Air Quality Forecaster'
         f'</div>',
