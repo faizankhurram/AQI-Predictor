@@ -5,6 +5,7 @@ Uses a MultiOutputRegressor wrapper so one model handles all three forecast
 horizons (+24h, +48h, +72h) simultaneously.
 """
 
+import json
 import os
 import logging
 
@@ -16,6 +17,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import RobustScaler
 from sklearn.pipeline import Pipeline
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from xgboost import XGBRegressor
 
 from src.features.build_features import (
@@ -26,13 +28,51 @@ from src.features.build_features import (
     save_training_feature_columns,
     DEFAULT_CORRELATION_THRESHOLD,
 )
-from src.models.metrics import evaluate_all_horizons, save_metrics
 
 log = logging.getLogger(__name__)
 
 HORIZON_LABELS = ["aqi_t_plus_24h", "aqi_t_plus_48h", "aqi_t_plus_72h"]
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models_artifacts")
 
+
+# ── Evaluation metrics (formerly metrics.py) ──────────────────────────────────
+
+def evaluate(y_true, y_pred, horizon_label: str) -> dict:
+    rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
+    mae = float(mean_absolute_error(y_true, y_pred))
+    r2 = float(r2_score(y_true, y_pred))
+    return {"horizon": horizon_label, "rmse": rmse, "mae": mae, "r2": r2}
+
+
+def evaluate_all_horizons(y_true_dict: dict, y_pred_dict: dict) -> dict:
+    results = {}
+    rmses, maes, r2s = [], [], []
+    for label in y_true_dict:
+        m = evaluate(y_true_dict[label], y_pred_dict[label], label)
+        results[label] = m
+        rmses.append(m["rmse"])
+        maes.append(m["mae"])
+        r2s.append(m["r2"])
+    results["average"] = {
+        "rmse": float(np.mean(rmses)),
+        "mae": float(np.mean(maes)),
+        "r2": float(np.mean(r2s)),
+    }
+    return results
+
+
+def save_metrics(metrics: dict, path: str):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+
+
+def load_metrics(path: str) -> dict:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ── Model pipelines ───────────────────────────────────────────────────────────
 
 def build_linear_pipeline() -> Pipeline:
     return Pipeline([

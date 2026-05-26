@@ -1,6 +1,6 @@
 """
 Streamlit AQI Predictor Dashboard — Karachi
-Run: streamlit run src/app/streamlit_app.py
+Run: streamlit run src/dashboard.py
 """
 
 import os
@@ -13,7 +13,7 @@ import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from src.serving.predict import predict, aqi_label
 from src.features.build_features import load_training_feature_columns
 from src.utils.mongo_store import read_features
@@ -289,7 +289,7 @@ def load_historical_data() -> pd.DataFrame | None:
             return df.sort_values("timestamp")
     except Exception:
         pass
-    csv_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "backfill.csv")
+    csv_path = os.path.join(os.path.dirname(__file__), "..", "data", "backfill.csv")
     if os.path.exists(csv_path):
         df = pd.read_csv(csv_path, parse_dates=["timestamp"])
         return df.sort_values("timestamp")
@@ -482,7 +482,7 @@ def render_pollutant_snapshot(raw_row: dict):
 def render_shap(feature_row: dict):
     import joblib
 
-    model_path = os.path.join(os.path.dirname(__file__), "..", "..", "models_artifacts", "best_model.pkl")
+    model_path = os.path.join(os.path.dirname(__file__), "..", "models_artifacts", "best_model.pkl")
     if not os.path.exists(model_path):
         st.info("SHAP not available — run the training pipeline first.")
         return

@@ -37,7 +37,7 @@ def train_mlp(X_train, Y_train, X_test, Y_test, epochs: int = 50, batch_size: in
     X/Y expected as numpy arrays.
     """
     from sklearn.preprocessing import StandardScaler
-    from src.models.metrics import evaluate_all_horizons
+    from src.models.sklearn_trainer import evaluate_all_horizons
     from src.features.build_features import get_target_columns
 
     scaler_x = StandardScaler()

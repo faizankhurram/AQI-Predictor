@@ -27,6 +27,11 @@ htmlcov/
 show_model_metrics.py
 metrics_report.json
 debug-*.log
+problem statement.txt
+*.txt.bak
+
+# Legacy / removed paths
+src/app/
 
 # Data & model artifacts (regenerate locally or via pipelines)
 data/*.csv

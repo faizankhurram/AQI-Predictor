@@ -28,7 +28,7 @@ feature_pipeline.py  ──►  MongoDB Feature Collection (aqi_hourly_v1)
                                          │
                             ┌────────────┴────────────┐
                             ▼                         ▼
-                         FastAPI /predict        Streamlit UI
+                         FastAPI (predict.py)     Streamlit (dashboard.py)
                                          │
                                3-day AQI forecast + alerts + SHAP
 ```
