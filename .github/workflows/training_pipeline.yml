@@ -39,4 +39,4 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           MONGODB_DB: ${{ secrets.MONGODB_DB || 'aqi_predictor' }}
-        run: python run_training_pipeline.py
+        run: python run_pipeline.py train

@@ -25,7 +25,7 @@ jobs:
           echo "HEAD=$(git rev-parse HEAD)"
           git log -1 --oneline
           test -f src/data/openmeteo_client.py || (echo "ERROR: src/data/openmeteo_client.py missing on this commit" && exit 1)
-          test -f run_feature_pipeline.py || (echo "ERROR: run_feature_pipeline.py missing — do not re-run old workflow commits" && exit 1)
+          test -f run_pipeline.py || (echo "ERROR: run_pipeline.py missing" && exit 1)
           ls -la src/data/
 
       - name: Set up Python
@@ -49,4 +49,4 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           MONGODB_DB: ${{ secrets.MONGODB_DB || 'aqi_predictor' }}
-        run: python run_feature_pipeline.py
+        run: python run_pipeline.py feature

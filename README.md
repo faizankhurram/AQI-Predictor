@@ -1,171 +1,151 @@
 # Karachi AQI Predictor
 
-End-to-end, serverless 3-day Air Quality Index forecasting for **Karachi, Pakistan**.
-
-Built with Open-Meteo · MongoDB Atlas · scikit-learn · GitHub Actions · Streamlit · FastAPI
+End-to-end **3-day US AQI forecasting** for Karachi, Pakistan — from live environmental data to a deployable model and interactive dashboard.
 
 ---
 
-## Quick Start
+## Overview
 
-### 1. Prerequisites
+Karachi regularly experiences elevated particulate pollution from traffic, industry, and seasonal dust. This project builds an automated pipeline that ingests hourly air-quality and weather data, engineers time-series features, trains regression models on historical patterns, and serves **+24h / +48h / +72h** AQI forecasts through a Streamlit UI and optional REST API.
+
+**Goals**
+
+- Provide residents and planners with short-horizon AQI outlooks (not just current readings).
+- Run reliably with minimal manual ops: scheduled ingest, daily retraining, cloud feature store.
+- Stay reproducible: versioned config, time-based evaluation, and explainability (SHAP) on the dashboard.
+
+**How it works (high level)**
+
+1. **Ingest** — Open-Meteo air-quality + weather APIs (PM2.5, PM10, NO₂, O₃, wind, humidity, etc.).
+2. **Feature store** — Hourly rows in MongoDB (`aqi_hourly_v1`) with calibrated PM2.5, EPA 2024 AQI, lags, 24h pollutant rolling means, cyclic time, wind U/V, and multi-horizon targets.
+3. **Train** — Compare Linear, Ridge, Random Forest, and XGBoost; prune correlated features; register the best model in MongoDB GridFS.
+4. **Serve** — Streamlit dashboard and FastAPI endpoints read the latest features + registered model to produce forecasts and alerts.
+
+---
+
+## Tech stack
+
+| Layer | Tools |
+|--------|--------|
+| Data | [Open-Meteo](https://open-meteo.com/) Air Quality + Forecast APIs |
+| Storage | MongoDB Atlas (features + model registry / GridFS) |
+| ML | scikit-learn, XGBoost; optional TensorFlow MLP |
+| Orchestration | GitHub Actions (hourly ingest, daily train) |
+| UI / API | Streamlit, FastAPI, Plotly |
+| Config | `config/settings.yaml`, `.env` |
+
+---
+
+## Project layout
+
+```
+.
+├── run_pipeline.py              # feature | train | backfill
+├── config/settings.yaml
+├── src/
+│   ├── dashboard.py             # Streamlit UI
+│   ├── data/openmeteo_client.py
+│   ├── features/build_features.py
+│   ├── models/
+│   │   ├── sklearn_trainer.py   # training + metrics
+│   │   └── tf_trainer.py        # optional MLP
+│   ├── pipelines/               # backfill, feature, training scripts
+│   ├── serving/predict.py       # inference + FastAPI app
+│   └── utils/mongo_store.py
+├── notebooks/eda_quick.ipynb
+├── report/report.md             # internship / project write-up
+└── .github/workflows/
+```
+
+---
+
+## Quick start
+
+### Prerequisites
 
 - Python 3.11+
-- A free [MongoDB Atlas](https://www.mongodb.com/atlas/database) cluster
-- A GitHub account (for CI/CD)
+- [MongoDB Atlas](https://www.mongodb.com/atlas/database) (free tier)
+- GitHub account (for CI/CD)
 
-MongoDB Atlas setup:
-- Create a database user with read/write access.
-- Add your current IP address for local development.
-- For GitHub Actions, allow runner access in **Network Access** (for a student/demo project, `0.0.0.0/0` is simplest; use a restricted rule if your organization provides one).
-- Copy the SRV connection string into `MONGODB_URI`.
+Atlas: create a DB user, allow your IP (or `0.0.0.0/0` for demos), copy the SRV URI into `MONGODB_URI`.
 
-### 2. Setup
+### Setup
 
 ```bash
 git clone <your-repo-url>
 cd "AQI Predictor"
 
-# Create virtual environment (Python 3.11+)
 py -3.12 -m venv .venv311
-.\.venv311\Scripts\Activate.ps1   # Windows PowerShell
+.\.venv311\Scripts\Activate.ps1   # Windows
 # source .venv311/bin/activate    # macOS/Linux
 
-# Install dependencies
 pip install -r requirements.txt
-
-# Configure credentials
-cp .env.example .env
-# Edit .env → set MONGODB_URI and MONGODB_DB
+cp .env.example .env              # set MONGODB_URI, MONGODB_DB
 ```
 
-### 3. Backfill historical data (run once)
+### Pipelines
 
 ```bash
-# Fetch 90 days of Open-Meteo data and upsert into MongoDB
-python src/pipelines/backfill.py --days 90
+# One-time history (90 days → MongoDB or CSV)
+python run_pipeline.py backfill --days 90
+python run_pipeline.py backfill --days 90 --csv-only   # skip MongoDB
 
-# Or save to local CSV only (skip MongoDB, useful for local dev)
-python src/pipelines/backfill.py --days 90 --csv-only
+# Train (MongoDB or local CSV)
+python run_pipeline.py train
+python run_pipeline.py train --csv data/backfill.csv
+
+# Hourly ingest (also run by GitHub Actions)
+python run_pipeline.py feature
 ```
 
-### 4. Train models
+### Dashboard & API
 
 ```bash
-# From MongoDB feature store (requires credentials)
-python src/pipelines/training_pipeline.py
+streamlit run src/dashboard.py
+# Sidebar: "Use local model" to skip MongoDB for UI-only demos
 
-# From local CSV backup (no MongoDB required)
-python src/pipelines/training_pipeline.py --csv data/backfill.csv
-
-# Also train optional TensorFlow MLP
-python src/pipelines/training_pipeline.py --csv data/backfill.csv --with-tf
+uvicorn src.serving.predict:app --reload
+# GET /health  /predict  /predict/local
 ```
 
-The default sklearn training set compares Linear Regression, Ridge, Random Forest,
-and XGBoost, then registers the lowest-RMSE model in MongoDB GridFS.
-
-### 5. Launch the dashboard
-
-```bash
-streamlit run src/app/streamlit_app.py
-```
-
-Toggle "Use local model" in the sidebar to avoid needing MongoDB credentials for the UI.
-
-### 6. Launch the API (optional)
-
-```bash
-uvicorn src.serving.api:app --reload
-# Endpoints:
-#   GET /health
-#   GET /predict        (uses MongoDB features + model registry)
-#   GET /predict/local  (uses local model + live Open-Meteo)
-```
-
-### 7. Run EDA notebook
+### EDA notebook
 
 ```powershell
-# One-time: notebook kernel + matplotlib
-.\.venv311\Scripts\python.exe -m pip install -r requirements-notebooks.txt
-.\.venv311\Scripts\python.exe -m ipykernel install --user --name aqi-predictor --display-name "AQI Predictor (.venv311)"
-
+pip install -r requirements-notebooks.txt
+python -m ipykernel install --user --name aqi-predictor --display-name "AQI Predictor (.venv311)"
 jupyter notebook notebooks/eda_quick.ipynb
-# Requires data/backfill.csv to exist first (run backfill.py)
 ```
 
-In Cursor/VS Code: open `notebooks/eda_quick.ipynb` and select kernel **AQI Predictor (.venv311)**. Figures are written to `notebooks/visuals/`.
+Figures save to `notebooks/visuals/` (git-ignored).
 
----
+### Local metrics viewer
 
-## Project Layout
-
-```
-.
-├── .github/workflows/
-│   ├── feature_pipeline.yml   # Runs every hour
-│   └── training_pipeline.yml  # Runs daily at 02:00 UTC
-├── config/settings.yaml        # Karachi lat/lon, thresholds, MongoDB names
-├── data/                       # Local CSV backup (git-ignored; see data/.gitkeep)
-├── models_artifacts/           # Saved .pkl + metrics.json (git-ignored)
-├── show_model_metrics.py       # Local metrics viewer (git-ignored)
-├── notebooks/eda_quick.ipynb
-├── report/report.md
-├── requirements.txt
-├── src/
-│   ├── data/openmeteo_client.py
-│   ├── features/build_features.py
-│   ├── pipelines/
-│   │   ├── feature_pipeline.py
-│   │   ├── backfill.py
-│   │   └── training_pipeline.py
-│   ├── models/
-│   │   ├── sklearn_trainer.py
-│   │   ├── tf_trainer.py
-│   │   └── metrics.py
-│   ├── serving/
-│   │   ├── predict.py
-│   │   └── api.py
-│   └── app/streamlit_app.py
-└── .env.example
+```bash
+python show_model_metrics.py --detailed    # git-ignored dev script
 ```
 
 ---
 
-## CI/CD Setup
+## CI/CD
 
-1. Push this repo to GitHub.
-2. Go to **Settings → Secrets and variables → Actions**.
-3. Add secrets:
-   - `MONGODB_URI` — MongoDB Atlas connection string
-   - Optional: `MONGODB_DB` — database name (defaults to `aqi_predictor`)
-
-   Workflows run `pip install -e .` then `python run_feature_pipeline.py` from the repo root.
-   Commit `pyproject.toml`, `run_feature_pipeline.py`, and the full `src/` tree (folder must be **`src/`**, not `scr/`).
-
-   **Important:** If a run fails, use **Actions → Feature Pipeline → Run workflow** on branch `main`.
-   Do **not** use **Re-run failed jobs** — that re-executes the old commit (before `src/data/` existed) and keeps the broken command `python src/pipelines/feature_pipeline.py`.
-4. The hourly and daily workflows will start automatically on the schedule.
-5. To test immediately: go to **Actions → Feature Pipeline (Hourly) → Run workflow**.
+1. Push to GitHub; add secrets `MONGODB_URI` (and optional `MONGODB_DB`).
+2. Workflows: **Feature Pipeline (Hourly)** → `python run_pipeline.py feature`; **Training (Daily)** → `python run_pipeline.py train`.
+3. Manual test: Actions → Feature Pipeline → Run workflow on `main`.
 
 ---
 
-## Environment Variables
+## Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `MONGODB_URI` | MongoDB Atlas connection string |
+| `MONGODB_URI` | Atlas connection string |
 | `MONGODB_DB` | Database name (default: `aqi_predictor`) |
 
-Copy `.env.example` to `.env` and fill in the values. Never commit `.env` to git.
-
-MongoDB collections are created automatically:
-- `aqi_hourly_v1` for feature rows, unique on `timestamp`
-- `model_registry` + GridFS (`fs.files`, `fs.chunks`) for model artifacts
+Collections: `aqi_hourly_v1` (unique `timestamp`), `model_registry` + GridFS.
 
 ---
 
-## Hazard Alert Thresholds
+## AQI categories (US EPA)
 
 | US AQI | Category |
 |--------|----------|
@@ -176,12 +156,13 @@ MongoDB collections are created automatically:
 | 201–300 | Very Unhealthy |
 | 301+ | Hazardous |
 
-The dashboard shows a coloured banner when current or any forecast AQI exceeds 150.
+The dashboard shows an alert banner when current or any forecast AQI exceeds 150.
 
 ---
 
-## MongoDB Sanity Check
+## Sanity check
 
 ```bash
 python -c "from dotenv import load_dotenv; load_dotenv(); from src.utils.mongo_store import get_database; print(get_database().name)"
+python -c "from src.features.build_features import build_features; from src.models.sklearn_trainer import train_and_evaluate; from src.serving.predict import app; print('imports OK')"
 ```

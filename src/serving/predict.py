@@ -179,7 +179,62 @@ def aqi_label(aqi: float) -> str:
         return "Hazardous"
 
 
+# ── FastAPI (formerly api.py) ─────────────────────────────────────────────────
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+
+@asynccontextmanager
+async def _api_lifespan(_app: FastAPI):
+    log.info("AQI Predictor API starting up.")
+    yield
+    log.info("AQI Predictor API shutting down.")
+
+
+app = FastAPI(
+    title="AQI Predictor API — Karachi",
+    description="3-day Air Quality Index forecast powered by Open-Meteo + MongoDB + scikit-learn.",
+    version="1.0.0",
+    lifespan=_api_lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/predict")
+def predict_endpoint():
+    try:
+        return predict(local=False)
+    except Exception as exc:
+        log.error("Prediction failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/predict/local")
+def predict_local_endpoint():
+    try:
+        return predict(local=True)
+    except Exception as exc:
+        log.error("Local prediction failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 if __name__ == "__main__":
     import json
-    result = predict(local="--local" in sys.argv)
-    print(json.dumps(result, indent=2, default=str))
+    if len(sys.argv) > 1 and sys.argv[1] == "api":
+        import uvicorn
+        uvicorn.run("src.serving.predict:app", host="0.0.0.0", port=8000, reload=True)
+    else:
+        result = predict(local="--local" in sys.argv)
+        print(json.dumps(result, indent=2, default=str))
