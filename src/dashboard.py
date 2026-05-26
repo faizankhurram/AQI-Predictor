@@ -13,17 +13,15 @@ import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 
-# ── Streamlit Cloud secrets → os.environ (no-op when running locally with .env) ──
-# Streamlit Cloud injects secrets as st.secrets; deeper modules read os.environ.
-try:
-    for _key in ("MONGODB_URI", "MONGODB_DB"):
-        if _key in st.secrets and not os.environ.get(_key):
-            os.environ[_key] = st.secrets[_key]
-except Exception:
-    pass  # st.secrets not available in local dev — .env is used instead
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from src.serving.predict import predict, aqi_label
+from src.serving.predict import (
+    predict,
+    aqi_label,
+    load_config,
+    load_model_local,
+    load_model_mongodb,
+    resolve_feature_columns,
+)
 from src.features.build_features import load_training_feature_columns
 from src.utils.mongo_store import read_features
 
@@ -489,18 +487,25 @@ def render_pollutant_snapshot(raw_row: dict):
 
 # ── SHAP panel ────────────────────────────────────────────────────────────────
 def render_shap(feature_row: dict):
-    import joblib
-
-    model_path = os.path.join(os.path.dirname(__file__), "..", "models_artifacts", "best_model.pkl")
-    if not os.path.exists(model_path):
-        st.info("SHAP not available — run the training pipeline first.")
-        return
-
     try:
         import shap
-        pipeline     = joblib.load(model_path)
-        feature_cols = load_training_feature_columns()
-        X            = pd.DataFrame([feature_row])[feature_cols].values
+        cfg = load_config()
+
+        # Prefer local model (dev), otherwise use MongoDB-registered model (Streamlit Cloud).
+        try:
+            pipeline = load_model_local()
+            feature_cols = load_training_feature_columns()
+        except Exception:
+            pipeline = load_model_mongodb(cfg)
+            feature_cols = resolve_feature_columns(cfg, local=False)
+
+        # Some sessions may not include all columns (e.g., after pruning changes).
+        safe_cols = [c for c in feature_cols if c in feature_row]
+        if not safe_cols:
+            st.info("SHAP not available — no matching feature columns for this prediction.")
+            return
+
+        X = pd.DataFrame([feature_row])[safe_cols].values
 
         estimator = pipeline.named_steps.get("model", pipeline)
         inner     = estimator.estimators_[0] if hasattr(estimator, "estimators_") else estimator
@@ -511,12 +516,12 @@ def render_shap(feature_row: dict):
             else shap.LinearExplainer(inner, X)
         )
 
-        X_scaled = pipeline.named_steps["scaler"].transform(X) if "scaler" in pipeline.named_steps else X
+        X_scaled = pipeline.named_steps["scaler"].transform(X) if "scaler" in getattr(pipeline, "named_steps", {}) else X
         shap_vals = explainer(X_scaled)
 
         top_n = 8
         importances = pd.DataFrame({
-            "Feature":     feature_cols,
+            "Feature":     safe_cols,
             "SHAP Value":  np.abs(shap_vals.values[0]),
         }).sort_values("SHAP Value", ascending=False).head(top_n)
 
@@ -557,6 +562,15 @@ def render_shap(feature_row: dict):
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     inject_css()
+
+    # ── Streamlit Cloud secrets → os.environ (no-op locally with .env) ─────────
+    # Avoid doing this at import-time (can trigger transient Streamlit session init issues).
+    try:
+        for _key in ("MONGODB_URI", "MONGODB_DB"):
+            if _key in st.secrets and not os.environ.get(_key):
+                os.environ[_key] = st.secrets[_key]
+    except Exception:
+        pass
 
     # Header
     st.markdown(
