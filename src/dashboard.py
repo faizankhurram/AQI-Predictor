@@ -23,7 +23,7 @@ from src.serving.predict import (
     resolve_feature_columns,
 )
 from src.features.build_features import load_training_feature_columns
-from src.utils.mongo_store import read_features
+from src.utils.mongo_store import read_features_since
 
 log = logging.getLogger(__name__)
 
@@ -289,9 +289,11 @@ def inject_css():
 
 
 # ── Data loading ─────────────────────────────────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
 def load_historical_data() -> pd.DataFrame | None:
     try:
-        df = read_features()
+        cutoff = datetime.now() - timedelta(days=8)
+        df = read_features_since(cutoff)
         if not df.empty:
             return df.sort_values("timestamp")
     except Exception:
@@ -299,8 +301,15 @@ def load_historical_data() -> pd.DataFrame | None:
     csv_path = os.path.join(os.path.dirname(__file__), "..", "data", "backfill.csv")
     if os.path.exists(csv_path):
         df = pd.read_csv(csv_path, parse_dates=["timestamp"])
-        return df.sort_values("timestamp")
+        cutoff = pd.Timestamp.utcnow().tz_localize(None) - timedelta(days=8)
+        return df[df["timestamp"] >= cutoff].sort_values("timestamp")
     return None
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_prediction(use_local: bool) -> dict:
+    """Cache prediction to avoid repeated model+Mongo loads on reruns."""
+    return predict(local=use_local)
 
 
 # ── Alert banner ──────────────────────────────────────────────────────────────
@@ -585,24 +594,22 @@ def main():
     # Sidebar
     st.sidebar.header("⚙️ Settings")
     use_local  = st.sidebar.toggle("Use local model (no MongoDB)", value=False)
-    show_shap  = st.sidebar.toggle("Show SHAP explanation", value=True)
+    show_shap  = st.sidebar.toggle("Show SHAP explanation", value=False)
     refresh    = st.sidebar.button("🔄 Refresh prediction", use_container_width=True)
 
     # Prediction
-    if "prediction" not in st.session_state or refresh:
-        with st.spinner("Running inference..."):
-            try:
-                st.session_state["prediction"] = predict(local=use_local)
-                st.session_state["pred_error"]  = None
-            except Exception as exc:
-                st.session_state["pred_error"] = str(exc)
+    if refresh:
+        get_prediction.clear()
+        load_historical_data.clear()
 
-    if st.session_state.get("pred_error"):
-        st.error(f"Prediction failed: {st.session_state['pred_error']}")
+    try:
+        with st.spinner("Running inference..."):
+            result = get_prediction(use_local)
+    except Exception as exc:
+        st.error(f"Prediction failed: {exc}")
         st.info("Make sure MongoDB credentials are set and the training pipeline has registered a model.")
         return
 
-    result      = st.session_state["prediction"]
     forecasts   = result["forecasts"]
     current_aqi = result.get("latest_actual")
     last_ts     = result.get("latest_timestamp")

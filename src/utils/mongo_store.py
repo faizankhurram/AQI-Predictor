@@ -31,7 +31,13 @@ def _mongo_uri() -> str:
 
 def get_database(db_name: str | None = None) -> Database:
     """Create a MongoDB database handle from environment variables."""
-    client = MongoClient(_mongo_uri(), serverSelectionTimeoutMS=30000)
+    timeout_ms = int(os.environ.get("MONGODB_TIMEOUT_MS", "10000"))
+    client = MongoClient(
+        _mongo_uri(),
+        serverSelectionTimeoutMS=timeout_ms,
+        connectTimeoutMS=timeout_ms,
+        socketTimeoutMS=timeout_ms,
+    )
     return client[db_name or os.environ.get("MONGODB_DB", DEFAULT_DB_NAME)]
 
 
@@ -138,6 +144,34 @@ def read_features(cfg: dict | None = None) -> pd.DataFrame:
     """Read all feature rows from MongoDB as a timestamp-sorted DataFrame."""
     collection = get_feature_collection(cfg)
     rows = list(collection.find({}, {"_id": 0}).sort("timestamp", 1))
+    df = pd.DataFrame(rows)
+    if not df.empty and "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+    return df
+
+
+def read_features_since(
+    since: pd.Timestamp | datetime,
+    cfg: dict | None = None,
+) -> pd.DataFrame:
+    """Read feature rows newer than or equal to `since`."""
+    collection = get_feature_collection(cfg)
+    rows = list(
+        collection.find(
+            {"timestamp": {"$gte": _to_mongo_value(since)}},
+            {"_id": 0},
+        ).sort("timestamp", 1)
+    )
+    df = pd.DataFrame(rows)
+    if not df.empty and "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+    return df
+
+
+def read_latest_feature_row(cfg: dict | None = None) -> pd.DataFrame:
+    """Read only the latest feature row."""
+    collection = get_feature_collection(cfg)
+    rows = list(collection.find({}, {"_id": 0}).sort("timestamp", -1).limit(1))
     df = pd.DataFrame(rows)
     if not df.empty and "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"])

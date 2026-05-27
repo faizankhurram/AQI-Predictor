@@ -31,6 +31,7 @@ from src.utils.mongo_store import (
     load_latest_model,
     get_latest_model_document,
     read_features,
+    read_latest_feature_row,
 )
 
 load_dotenv()
@@ -60,7 +61,7 @@ def load_model_mongodb(cfg: dict):
 
 def get_latest_features_mongodb(cfg: dict) -> pd.DataFrame:
     """Pull the most recent rows from MongoDB feature store."""
-    df = read_features(cfg)
+    df = read_latest_feature_row(cfg)
     if df.empty:
         raise RuntimeError("MongoDB feature collection is empty.")
     return df.sort_values("timestamp")
