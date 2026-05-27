@@ -31,13 +31,18 @@ def _mongo_uri() -> str:
 
 def get_database(db_name: str | None = None) -> Database:
     """Create a MongoDB database handle from environment variables."""
-    timeout_ms = int(os.environ.get("MONGODB_TIMEOUT_MS", "10000"))
-    client = MongoClient(
-        _mongo_uri(),
-        serverSelectionTimeoutMS=timeout_ms,
-        connectTimeoutMS=timeout_ms,
-        socketTimeoutMS=timeout_ms,
-    )
+    timeout_raw = os.environ.get("MONGODB_TIMEOUT_MS")
+    if timeout_raw:
+        timeout_ms = int(timeout_raw)
+        client = MongoClient(
+            _mongo_uri(),
+            serverSelectionTimeoutMS=timeout_ms,
+            connectTimeoutMS=timeout_ms,
+            socketTimeoutMS=timeout_ms,
+        )
+    else:
+        # Use PyMongo defaults when no explicit timeout is provided.
+        client = MongoClient(_mongo_uri())
     return client[db_name or os.environ.get("MONGODB_DB", DEFAULT_DB_NAME)]
 
 
