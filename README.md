@@ -25,14 +25,14 @@ Karachi regularly experiences elevated particulate pollution from traffic, indus
 
 ## Tech stack
 
-| Layer | Tools |
-|--------|--------|
-| Data | [Open-Meteo](https://open-meteo.com/) Air Quality + Forecast APIs |
-| Storage | MongoDB Atlas (features + model registry / GridFS) |
-| ML | scikit-learn, XGBoost; optional TensorFlow MLP |
-| Orchestration | GitHub Actions (hourly ingest, daily train) |
-| UI / API | Streamlit, FastAPI, Plotly |
-| Config | `config/settings.yaml`, `.env` |
+| Layer         | Tools                                                                 |
+|---------------|-----------------------------------------------------------------------|
+| Data          | [Open-Meteo](https://open-meteo.com/) Air Quality + Forecast APIs       |
+| Storage       | MongoDB Atlas (features + model registry / GridFS)                    |
+| ML            | scikit-learn, XGBoost; optional TensorFlow MLP                        |
+| Orchestration | GitHub Actions (hourly ingest, daily train)                           |
+| UI / API      | Streamlit, FastAPI, Plotly                                            |
+| Config        | `config/settings.yaml`, `.env`                                        |
 
 ---
 
@@ -136,10 +136,10 @@ python show_model_metrics.py --detailed    # git-ignored dev script
 
 ## Environment variables
 
-| Variable | Description |
-|----------|-------------|
-| `MONGODB_URI` | Atlas connection string |
-| `MONGODB_DB` | Database name (default: `aqi_predictor`) |
+| Variable      | Description                              |
+|---------------|------------------------------------------|
+| `MONGODB_URI` | Atlas connection string                  |
+| `MONGODB_DB`  | Database name (default: `aqi_predictor`) |
 
 Collections: `aqi_hourly_v1` (unique `timestamp`), `model_registry` + GridFS.
 
@@ -147,22 +147,15 @@ Collections: `aqi_hourly_v1` (unique `timestamp`), `model_registry` + GridFS.
 
 ## AQI categories (US EPA)
 
-| US AQI | Category |
-|--------|----------|
-| 0–50 | Good |
-| 51–100 | Moderate |
-| 101–150 | Unhealthy for Sensitive Groups |
-| 151–200 | Unhealthy |
-| 201–300 | Very Unhealthy |
-| 301+ | Hazardous |
+| US AQI  | Category                          |
+|---------|-----------------------------------|
+| 0–50    | Good                              |
+| 51–100  | Moderate                          |
+| 101–150 | Unhealthy for Sensitive Groups    |
+| 151–200 | Unhealthy                         |
+| 201–300 | Very Unhealthy                    |
+| 301+    | Hazardous                         |
 
 The dashboard shows an alert banner when current or any forecast AQI exceeds 150.
 
 ---
-
-## Sanity check
-
-```bash
-python -c "from dotenv import load_dotenv; load_dotenv(); from src.utils.mongo_store import get_database; print(get_database().name)"
-python -c "from src.features.build_features import build_features; from src.models.sklearn_trainer import train_and_evaluate; from src.serving.predict import app; print('imports OK')"
-```
