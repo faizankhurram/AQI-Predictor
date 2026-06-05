@@ -5,7 +5,7 @@ Root entry point for scheduled and local pipeline runs.
   python run_pipeline.py feature          # hourly ingest (CI)
   python run_pipeline.py train            # daily training (CI)
   python run_pipeline.py train --csv data/backfill.csv
-  python run_pipeline.py backfill --days 90
+  python run_pipeline.py backfill --days 365
 """
 
 import argparse
@@ -27,7 +27,7 @@ def main():
     train_p.add_argument("--test-days", type=int, default=14, help="Holdout size in days")
 
     backfill_p = sub.add_parser("backfill", help="One-time historical load")
-    backfill_p.add_argument("--days", type=int, default=90)
+    backfill_p.add_argument("--days", type=int, default=365)
     backfill_p.add_argument("--csv-only", action="store_true")
 
     reset_p = sub.add_parser("reset", help="Wipe MongoDB features, registry, and GridFS")

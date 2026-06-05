@@ -502,39 +502,43 @@ def render_shap(feature_row: dict):
 
         # Prefer local model (dev), otherwise use MongoDB-registered model (Streamlit Cloud).
         try:
-            pipeline = load_model_local()
-            feature_cols = load_training_feature_columns()
+            artifact = load_model_local()
         except Exception:
-            pipeline = load_model_mongodb(cfg)
-            feature_cols = resolve_feature_columns(cfg, local=False)
+            artifact = load_model_mongodb(cfg)
 
-        # Some sessions may not include all columns (e.g., after pruning changes).
+        model = artifact["model"]
+        scaler = artifact.get("scaler")
+        feature_cols = artifact.get("features") or resolve_feature_columns(cfg, local=False)
+
+        # Some sessions may not include all columns.
         safe_cols = [c for c in feature_cols if c in feature_row]
-        if not safe_cols:
-            st.info("SHAP not available — no matching feature columns for this prediction.")
+        if not safe_cols or len(safe_cols) != len(feature_cols):
+            st.info("SHAP not available — feature set does not match this prediction.")
             return
 
-        X = pd.DataFrame([feature_row])[safe_cols].values
+        X = pd.DataFrame([feature_row])[feature_cols]
+        X_scaled = scaler.transform(X) if scaler is not None else X.values
 
-        estimator = pipeline.named_steps.get("model", pipeline)
-        inner     = estimator.estimators_[0] if hasattr(estimator, "estimators_") else estimator
-
-        explainer = (
-            shap.TreeExplainer(inner)
-            if hasattr(inner, "feature_importances_")
-            else shap.LinearExplainer(inner, X)
-        )
-
-        X_scaled = pipeline.named_steps["scaler"].transform(X) if "scaler" in getattr(pipeline, "named_steps", {}) else X
-        shap_vals = explainer(X_scaled)
+        is_tree = hasattr(model, "feature_importances_")
+        if is_tree:
+            explainer = shap.TreeExplainer(model)
+        elif hasattr(model, "coef_"):
+            explainer = shap.LinearExplainer(model, X_scaled)
+        else:
+            explainer = shap.KernelExplainer(model.predict, X_scaled)
+        shap_vals = explainer(X_scaled) if is_tree or hasattr(model, "coef_") else None
+        if shap_vals is not None:
+            vals = np.abs(np.array(shap_vals.values).reshape(-1))
+        else:
+            vals = np.abs(np.array(explainer.shap_values(X_scaled)).reshape(-1))
 
         top_n = 8
         importances = pd.DataFrame({
-            "Feature":     safe_cols,
-            "SHAP Value":  np.abs(shap_vals.values[0]),
+            "Feature":     feature_cols,
+            "SHAP Value":  vals,
         }).sort_values("SHAP Value", ascending=False).head(top_n)
 
-        st.subheader("Top Feature Contributions (latest prediction, +24h horizon)")
+        st.subheader("Top Feature Contributions (next-hour AQI model)")
 
         max_shap = importances["SHAP Value"].max()
         colors   = [

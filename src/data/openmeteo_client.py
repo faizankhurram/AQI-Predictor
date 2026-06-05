@@ -16,14 +16,33 @@ AQ_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
-AQ_VARS = ["pm2_5", "pm10", "nitrogen_dioxide", "ozone", "us_aqi"]
+# Full pollutant panel (mirrors the reference pipeline for max signal).
+AQ_VARS = [
+    "pm2_5",
+    "pm10",
+    "carbon_monoxide",
+    "carbon_dioxide",
+    "nitrogen_dioxide",
+    "sulphur_dioxide",
+    "ozone",
+    "dust",
+    "uv_index",
+    "us_aqi",
+]
 WEATHER_VARS = [
     "temperature_2m",
     "relative_humidity_2m",
     "wind_speed_10m",
     "wind_direction_10m",
-    "precipitation",
+    "cloud_cover",
 ]
+
+# Keep dashboard/feature names stable; full names retained for the rest.
+AQ_RENAME = {
+    "nitrogen_dioxide": "no2",
+    "ozone": "o3",
+    "us_aqi": "aqi_us",
+}
 
 
 def _get_json(url: str, params: dict, retries: int = 3) -> dict:
@@ -72,12 +91,7 @@ def fetch_air_quality(
         "timezone": "Asia/Karachi",
     }
     data = _get_json(AQ_URL, params)
-    rename = {
-        "nitrogen_dioxide": "no2",
-        "ozone": "o3",
-        "us_aqi": "aqi_us",
-    }
-    return _parse_hourly(data, rename)
+    return _parse_hourly(data, AQ_RENAME)
 
 
 def fetch_weather_forecast(lat: float, lon: float, days: int = 7) -> pd.DataFrame:

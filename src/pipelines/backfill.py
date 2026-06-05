@@ -2,8 +2,8 @@
 Backfill pipeline — run ONCE to populate MongoDB with historical feature data.
 
 Usage:
-    python src/pipelines/backfill.py                  # default 90 days
-    python src/pipelines/backfill.py --days 180        # extend backfill
+    python src/pipelines/backfill.py                  # default 365 days
+    python src/pipelines/backfill.py --days 180        # shorter backfill
     python src/pipelines/backfill.py --csv-only        # save CSV, skip MongoDB
 """
 
@@ -23,7 +23,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import yaml
 from src.data.openmeteo_client import fetch_combined
-from src.features.build_features import build_features, drop_incomplete_rows
+from src.features.build_features import build_features, drop_incomplete_features
 from src.utils.mongo_store import upsert_features
 
 load_dotenv()
@@ -49,7 +49,7 @@ def date_batches(start: datetime, end: datetime, batch_days: int):
         cursor = batch_end + timedelta(days=1)
 
 
-def run(backfill_days: int = 90, csv_only: bool = False):
+def run(backfill_days: int = 365, csv_only: bool = False):
     cfg = load_config()
     lat = cfg["location"]["latitude"]
     lon = cfg["location"]["longitude"]
@@ -60,26 +60,33 @@ def run(backfill_days: int = 90, csv_only: bool = False):
     log.info("Backfilling %d days: %s → %s", backfill_days,
              start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
 
-    all_frames = []
+    raw_frames = []
     batches = list(date_batches(start_dt, end_dt, BATCH_DAYS))
     for i, (s, e) in enumerate(batches, 1):
         log.info("Batch %d/%d: %s → %s", i, len(batches), s, e)
         try:
             raw = fetch_combined(lat, lon, s, e, is_historical=True)
-            featured = build_features(raw)
-            clean = drop_incomplete_rows(featured)
-            all_frames.append(clean)
-            log.info("  → %d clean rows", len(clean))
+            raw_frames.append(raw)
+            log.info("  → %d raw rows", len(raw))
         except Exception as exc:
             log.warning("  Batch failed (%s); skipping.", exc)
         time.sleep(SLEEP_S)
 
-    if not all_frames:
+    if not raw_frames:
         log.error("No data collected — check API connectivity.")
         sys.exit(1)
 
-    full_df = pd.concat(all_frames, ignore_index=True).drop_duplicates(subset=["timestamp"])
-    log.info("Total rows collected: %d", len(full_df))
+    # Build features once over the continuous series so rolling windows are correct.
+    raw_all = (
+        pd.concat(raw_frames, ignore_index=True)
+        .drop_duplicates(subset=["timestamp"])
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
+    log.info("Total raw rows: %d — engineering features over full series...", len(raw_all))
+    featured = build_features(raw_all)
+    full_df = drop_incomplete_features(featured).drop_duplicates(subset=["timestamp"])
+    log.info("Total feature rows: %d", len(full_df))
 
     # Always save a local CSV backup
     csv_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "backfill.csv")
@@ -99,7 +106,7 @@ def run(backfill_days: int = 90, csv_only: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--days", type=int, default=90, help="Days to backfill (default 90)")
+    parser.add_argument("--days", type=int, default=365, help="Days to backfill (default 365)")
     parser.add_argument("--csv-only", action="store_true", help="Save CSV, skip MongoDB")
     args = parser.parse_args()
     run(backfill_days=args.days, csv_only=args.csv_only)

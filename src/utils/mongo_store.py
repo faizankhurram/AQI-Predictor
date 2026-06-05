@@ -99,7 +99,8 @@ def dataframe_to_ingest_records(
     are not sent to MongoDB so hourly sync does not wipe targets from backfill rows.
     """
     if target_columns is None:
-        target_columns = ("aqi_t_plus_24h", "aqi_t_plus_48h", "aqi_t_plus_72h")
+        # Single-step next-hour target is created at train time, not stored.
+        target_columns = ("target",)
 
     records: list[dict[str, Any]] = []
     for row in df.to_dict(orient="records"):

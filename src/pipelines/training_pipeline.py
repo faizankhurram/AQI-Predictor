@@ -25,15 +25,8 @@ import logging
 import pandas as pd
 from dotenv import load_dotenv
 import yaml
-from src.models.sklearn_trainer import train_and_evaluate, time_split, MODELS_DIR
-from src.features.build_features import (
-    get_target_columns,
-    drop_incomplete_rows,
-    prepare_training_frame,
-    load_training_feature_columns,
-    preprocess_training_splits,
-    prune_correlated_features,
-)
+from src.models.sklearn_trainer import train_and_evaluate, MODELS_DIR
+from src.features.build_features import prepare_training_frame
 from src.utils.mongo_store import DEFAULT_MODEL_NAME, read_features, save_model_artifact
 
 load_dotenv()
@@ -57,7 +50,7 @@ def load_from_mongodb(cfg: dict) -> pd.DataFrame:
 
 def register_model_mongodb(cfg: dict, result: dict):
     """Push the best sklearn model artifact to MongoDB GridFS + registry metadata."""
-    avg = result["metrics"]["average"]
+    sel = result["metrics"]["selected"]
     model_dir = MODELS_DIR
     metrics_path = os.path.join(model_dir, "metrics.json")
     model_doc = save_model_artifact(
@@ -66,9 +59,9 @@ def register_model_mongodb(cfg: dict, result: dict):
         metrics_path=metrics_path,
         metadata={
             "best_name": result["best_name"],
-            "rmse": avg["rmse"],
-            "mae": avg["mae"],
-            "r2": avg["r2"],
+            "rmse": sel["rmse"],
+            "mae": sel["mae"],
+            "r2": sel["r2"],
             "feature_cols": result["feature_cols"],
             "target_cols": result["target_cols"],
         },
@@ -102,13 +95,8 @@ def run(csv_path: str | None = None, with_tf: bool = False, test_days: int = 14)
     log.info("Dataset: %d rows, %s → %s",
              len(df), df["timestamp"].min(), df["timestamp"].max())
 
-    # Train sklearn models
-    corr_threshold = cfg.get("data", {}).get(
-        "feature_correlation_threshold", 0.85
-    )
-    result = train_and_evaluate(
-        df, test_days=test_days, correlation_threshold=corr_threshold
-    )
+    # Train sklearn ensemble (next-hour AQI target).
+    result = train_and_evaluate(df, test_days=test_days)
 
     # Register to MongoDB (skip if using CSV-only local dev)
     if not csv_path:
@@ -118,32 +106,7 @@ def run(csv_path: str | None = None, with_tf: bool = False, test_days: int = 14)
             log.warning("MongoDB model registration failed: %s — saved locally only.", exc)
 
     if with_tf:
-        log.info("Training optional TensorFlow MLP...")
-        try:
-            from src.models.tf_trainer import train_mlp
-            from src.models.sklearn_trainer import time_split
-            import numpy as np
-
-            target_cols = get_target_columns()
-            train, test = time_split(df, test_days=test_days)
-            train, test = preprocess_training_splits(
-                train, test, load_training_feature_columns(), target_cols
-            )
-            feature_cols = load_training_feature_columns()
-            X_train = train[feature_cols].values
-            Y_train = train[target_cols].values
-            X_test = test[feature_cols].values
-            Y_test = test[target_cols].values
-
-            _, tf_metrics, _, _ = train_mlp(X_train, Y_train, X_test, Y_test)
-            sk_rmse = result["metrics"]["average"]["rmse"]
-            tf_rmse = tf_metrics["average"]["rmse"]
-            if tf_rmse < sk_rmse:
-                log.info("TF-MLP (RMSE=%.2f) beats sklearn (RMSE=%.2f); consider registering TF model.", tf_rmse, sk_rmse)
-            else:
-                log.info("sklearn (RMSE=%.2f) still best — TF-MLP RMSE=%.2f; sklearn model retained.", sk_rmse, tf_rmse)
-        except ImportError as e:
-            log.warning("TensorFlow not available: %s", e)
+        log.info("--with-tf is no longer supported under the iterative-forecast pipeline; skipping.")
 
     log.info("Training pipeline complete.")
     return result

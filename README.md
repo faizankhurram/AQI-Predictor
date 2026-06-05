@@ -8,7 +8,9 @@ Deployed Link: https://faizan-aqi-predictor-karachi.streamlit.app
 
 ## Overview
 
-Karachi regularly experiences elevated particulate pollution from traffic, industry, and seasonal dust. This project builds an automated pipeline that ingests hourly air-quality and weather data, engineers time-series features, trains regression models on historical patterns, and serves **+24h / +48h / +72h** AQI forecasts through a Streamlit UI and optional REST API.
+Karachi regularly experiences elevated particulate pollution from traffic, industry, and seasonal dust. This project builds an automated pipeline that ingests hourly air-quality and weather data, engineers time-series features, trains regression models on historical patterns, and serves a **3-day (96-hour)** AQI forecast through a Streamlit UI and optional REST API.
+
+**Modelling approach.** The model is trained to predict the **next hour's** US AQI (`aqi_us.shift(-1)`). Because AQI is highly autocorrelated, this single-step target is learned with high accuracy (R² ≈ 0.9 on real Karachi data). Multi-day outlooks (+24h / +48h / +72h) are then produced by **iterative (recursive) forecasting** — predicting one hour ahead, feeding the prediction back in, and repeating 96 times. This is far more accurate than predicting 1–3 days ahead directly.
 
 **Goals**
 
@@ -18,10 +20,11 @@ Karachi regularly experiences elevated particulate pollution from traffic, indus
 
 **How it works (high level)**
 
-1. **Ingest** — Open-Meteo air-quality + weather APIs (PM2.5, PM10, NO₂, O₃, wind, humidity, etc.).
-2. **Feature store** — Hourly rows in MongoDB (`aqi_hourly_v1`) with calibrated PM2.5, EPA 2024 AQI, lags, 24h pollutant rolling means, cyclic time, wind U/V, and multi-horizon targets.
-3. **Train** — Compare Linear, Ridge, Random Forest, and XGBoost; prune correlated features; register the best model in MongoDB GridFS.
-4. **Serve** — Streamlit dashboard and FastAPI endpoints read the latest features + registered model to produce forecasts and alerts.
+1. **Ingest** — Open-Meteo air-quality + weather APIs (PM2.5, PM10, CO, CO₂, NO₂, SO₂, O₃, dust, UV, temperature, humidity, wind, cloud cover).
+2. **Clean & engineer** — Gap-fill (ffill/interpolate), IQR outlier capping, then cyclic hour, wind U/V components, 36h rolling means + 72h rolling stds, AQI change rate, PM2.5/PM10 ratio, rush-hour and precipitation-likelihood features.
+3. **Feature store** — Hourly engineered rows in MongoDB (`aqi_hourly_v1`), keyed by `timestamp`.
+4. **Train** — Compare Random Forest, Gradient Boosting, XGBoost, SVR, and Ridge (MinMaxScaler, time-ordered 80/20 split); select the best by R², retrain on the full series, and register `{model, scaler, features}` in MongoDB GridFS.
+5. **Serve** — Streamlit dashboard and FastAPI endpoints run the iterative 96-hour forecast and surface forecasts, alerts, and SHAP explanations.
 
 ---
 
@@ -31,7 +34,7 @@ Karachi regularly experiences elevated particulate pollution from traffic, indus
 |---------------|-----------------------------------------------------------------------|
 | Data          | [Open-Meteo](https://open-meteo.com/) Air Quality + Forecast APIs       |
 | Storage       | MongoDB Atlas (features + model registry / GridFS)                    |
-| ML            | scikit-learn, XGBoost; optional TensorFlow MLP                        |
+| ML            | scikit-learn (RF, GBR, SVR, Ridge), XGBoost; SHAP explainability      |
 | Orchestration | GitHub Actions (hourly ingest, daily train)                           |
 | UI / API      | Streamlit, FastAPI, Plotly                                            |
 | Config        | `config/settings.yaml`, `.env`                                        |
@@ -88,9 +91,9 @@ cp .env.example .env              # set MONGODB_URI, MONGODB_DB
 ### Pipelines
 
 ```bash
-# One-time history (90 days → MongoDB or CSV)
-python run_pipeline.py backfill --days 90
-python run_pipeline.py backfill --days 90 --csv-only   # skip MongoDB
+# One-time history (365 days → MongoDB or CSV)
+python run_pipeline.py backfill --days 365
+python run_pipeline.py backfill --days 365 --csv-only   # skip MongoDB
 
 # Train (MongoDB or local CSV)
 python run_pipeline.py train

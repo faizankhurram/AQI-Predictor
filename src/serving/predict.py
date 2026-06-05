@@ -1,16 +1,17 @@
 """
-Inference module: loads the registered model + latest feature rows
-and returns a 3-day (72 h) AQI forecast for Karachi.
+Inference module: loads the registered {model, scaler, features} artifact and
+produces a 3-day AQI forecast for Karachi via **iterative one-hour-ahead**
+prediction (recursive multi-step forecasting).
 
-Can run in two modes:
-  - MongoDB mode (default): pulls model + features from MongoDB
-  - Local mode (--local): uses models_artifacts/best_model.pkl + data/backfill.csv
+Modes:
+  - MongoDB mode (default): pulls model + recent features from MongoDB
+  - Local mode (--local): uses models_artifacts/best_model.pkl + live/CSV features
 """
 
 import os
 import sys
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 import numpy as np
@@ -20,25 +21,32 @@ import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.features.build_features import (
+    TARGET_COL,
     load_training_feature_columns,
     get_feature_columns,
     build_features,
+    feature_columns_from_df,
     training_feature_cols_path,
+    ROLLING_MEAN_WINDOWS,
+    ROLLING_STD_WINDOWS,
+    ROLLING_MEAN_VARS,
+    ROLLING_STD_VARS,
 )
 from src.data.openmeteo_client import fetch_last_n_hours
 from src.utils.mongo_store import (
     DEFAULT_MODEL_NAME,
     load_latest_model,
     get_latest_model_document,
-    read_features,
-    read_latest_feature_row,
+    read_features_since,
 )
 
 load_dotenv()
 log = logging.getLogger(__name__)
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models_artifacts")
-TARGET_HORIZONS = [24, 48, 72]  # hours ahead
+TARGET_HORIZONS = [24, 48, 72]   # hours ahead, derived from the iterative forecast
+FORECAST_STEPS = 96              # iterative one-hour steps (4 days)
+HISTORY_DAYS = 30                # context window for rolling features
 
 
 def load_config() -> dict:
@@ -47,46 +55,28 @@ def load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def load_model_local():
+# ── Model loading (artifact = {"model", "scaler", "features"}) ─────────────────
+def _normalize_artifact(obj) -> dict:
+    """Accept either the new dict payload or a bare estimator (legacy)."""
+    if isinstance(obj, dict) and "model" in obj:
+        return obj
+    return {"model": obj, "scaler": None, "features": None}
+
+
+def load_model_local() -> dict:
     path = os.path.join(MODELS_DIR, "best_model.pkl")
     if not os.path.exists(path):
         raise FileNotFoundError(f"No local model found at {path}. Run training_pipeline.py first.")
-    return joblib.load(path)
+    return _normalize_artifact(joblib.load(path))
 
 
-def load_model_mongodb(cfg: dict):
+def load_model_mongodb(cfg: dict) -> dict:
     model_name = cfg.get("mongodb", {}).get("model_name", DEFAULT_MODEL_NAME)
-    return load_latest_model(model_name, cfg)
-
-
-def get_latest_features_mongodb(cfg: dict) -> pd.DataFrame:
-    """Pull the most recent rows from MongoDB feature store."""
-    df = read_latest_feature_row(cfg)
-    if df.empty:
-        raise RuntimeError("MongoDB feature collection is empty.")
-    return df.sort_values("timestamp")
-
-
-def get_latest_features_live(cfg: dict) -> pd.DataFrame:
-    """Fetch the last 72 h from Open-Meteo and compute features (live mode)."""
-    lat = cfg["location"]["latitude"]
-    lon = cfg["location"]["longitude"]
-    raw = fetch_last_n_hours(lat, lon, n_hours=72)
-    featured = build_features(raw)
-    return featured.sort_values("timestamp")
-
-
-def get_latest_features_from_local_csv() -> pd.DataFrame:
-    """Fallback source when live API data is too short for lag features."""
-    csv_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "backfill.csv")
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Local fallback file not found: {csv_path}")
-    df = pd.read_csv(csv_path, parse_dates=["timestamp"])
-    return df.sort_values("timestamp")
+    return _normalize_artifact(load_latest_model(model_name, cfg))
 
 
 def resolve_feature_columns(cfg: dict, local: bool = False) -> list[str]:
-    """Use pruned columns from training (local JSON or MongoDB registry metadata)."""
+    """Feature list from the training run (local JSON or MongoDB registry metadata)."""
     if os.path.isfile(training_feature_cols_path()):
         return load_training_feature_columns()
     if not local:
@@ -101,68 +91,94 @@ def resolve_feature_columns(cfg: dict, local: bool = False) -> list[str]:
     return get_feature_columns()
 
 
-def predict(local: bool = False) -> dict:
-    """
-    Returns a dict:
-      {
-        "generated_at": ISO timestamp,
-        "forecasts": [
-          {"horizon_h": 24, "aqi_us": float, "label": str},
-          {"horizon_h": 48, "aqi_us": float, "label": str},
-          {"horizon_h": 72, "aqi_us": float, "label": str},
-        ],
-        "latest_actual": float,
-        "latest_timestamp": ISO str,
-        "feature_row": dict,   # for SHAP
-      }
-    """
-    cfg = load_config()
+# ── Feature sources ───────────────────────────────────────────────────────────
+def get_recent_features_mongodb(cfg: dict) -> pd.DataFrame:
+    """Pull the recent window of engineered rows from MongoDB (for rolling context)."""
+    cutoff = datetime.utcnow() - timedelta(days=HISTORY_DAYS)
+    df = read_features_since(cutoff, cfg)
+    if df.empty:
+        raise RuntimeError("MongoDB feature collection is empty for the recent window.")
+    return df.sort_values("timestamp").reset_index(drop=True)
 
-    if local:
-        model = load_model_local()
-        df = get_latest_features_live(cfg)
-    else:
-        model = load_model_mongodb(cfg)
-        try:
-            df = get_latest_features_mongodb(cfg)
-        except Exception:
-            log.warning("MongoDB feature read failed; falling back to live fetch.")
-            df = get_latest_features_live(cfg)
 
-    feature_cols = resolve_feature_columns(cfg, local=local)
-    # Use the most recent complete row
-    available = df.dropna(subset=feature_cols)
-    if available.empty and local:
-        # Live endpoint can return only ~24 future hours, which breaks 24h lag features.
-        # In local mode we fallback to the latest complete row from backfill.csv.
-        df = get_latest_features_from_local_csv()
-        available = df.dropna(subset=feature_cols)
-    if available.empty:
-        raise RuntimeError("No complete feature rows available for inference.")
+def get_recent_features_live(cfg: dict) -> pd.DataFrame:
+    """Fetch recent Open-Meteo data and engineer features (live/local mode)."""
+    lat = cfg["location"]["latitude"]
+    lon = cfg["location"]["longitude"]
+    raw = fetch_last_n_hours(lat, lon, n_hours=24 * 10)
+    featured = build_features(raw)
+    return featured.sort_values("timestamp").reset_index(drop=True)
 
-    latest_row = available.iloc[[-1]]
-    X = latest_row[feature_cols].values
 
-    preds = model.predict(X)[0]  # shape (3,)
+def get_recent_features_from_local_csv() -> pd.DataFrame:
+    csv_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "backfill.csv")
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"Local fallback file not found: {csv_path}")
+    df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+    return df.sort_values("timestamp").reset_index(drop=True)
 
-    forecasts = []
-    for i, h in enumerate(TARGET_HORIZONS):
-        aqi_val = max(float(preds[i]), 0.0)
-        forecasts.append({
-            "horizon_h": h,
-            "aqi_us": round(aqi_val, 1),
-            "label": aqi_label(aqi_val),
-        })
 
-    latest_aqi = float(latest_row["aqi_us"].values[0]) if "aqi_us" in latest_row.columns else None
+# ── Iterative forecast ────────────────────────────────────────────────────────
+def _recompute_dynamic_features(sim: pd.DataFrame) -> pd.DataFrame:
+    """Recompute the time/rolling/derived features that change over the horizon."""
+    hour = sim["timestamp"].dt.hour
+    sim["hour_sin"] = np.sin(2 * np.pi * hour / 24)
+    sim["is_rush_hour"] = (((hour >= 7) & (hour <= 9)) | ((hour >= 17) & (hour <= 19))).astype(int)
 
-    return {
-        "generated_at": datetime.utcnow().isoformat(),
-        "forecasts": forecasts,
-        "latest_actual": latest_aqi,
-        "latest_timestamp": str(latest_row["timestamp"].values[0]),
-        "feature_row": latest_row[feature_cols].to_dict(orient="records")[0],
-    }
+    for window in ROLLING_MEAN_WINDOWS:
+        for var in ROLLING_MEAN_VARS:
+            col = f"{var}_rolling_mean_{window}h"
+            if var in sim.columns and col in sim.columns:
+                sim[col] = sim[var].shift(1).rolling(window=window, min_periods=1).mean()
+    for window in ROLLING_STD_WINDOWS:
+        for var in ROLLING_STD_VARS:
+            col = f"{var}_rolling_std_{window}h"
+            if var in sim.columns and col in sim.columns:
+                sim[col] = sim[var].shift(1).rolling(window=window, min_periods=1).std()
+
+    if "aqi_change_rate" in sim.columns and "aqi_us" in sim.columns:
+        sim["aqi_change_rate"] = sim["aqi_us"].diff()
+    if {"pm_ratio", "pm2_5", "pm10"}.issubset(sim.columns):
+        sim["pm_ratio"] = np.where(sim["pm10"] > 0, sim["pm2_5"] / sim["pm10"], 0)
+    return sim
+
+
+def forecast_iterative(
+    df: pd.DataFrame,
+    model,
+    scaler,
+    features: list[str],
+    steps: int = FORECAST_STEPS,
+) -> list[dict]:
+    """Recursive multi-step forecast: predict +1h, append, recompute, repeat."""
+    sim = df.sort_values("timestamp").reset_index(drop=True).copy()
+    sim["timestamp"] = pd.to_datetime(sim["timestamp"])
+    sim = _recompute_dynamic_features(sim)
+
+    predictions: list[dict] = []
+    for _ in range(steps):
+        feat_row = sim[features].iloc[-1].copy()
+        for f in features:
+            if pd.isna(feat_row[f]):
+                valid = sim[f].dropna()
+                feat_row[f] = valid.iloc[-1] if len(valid) else 0.0
+        X = feat_row.values.reshape(1, -1)
+        if scaler is not None:
+            X = scaler.transform(pd.DataFrame([feat_row], columns=features))
+        pred = float(model.predict(X)[0])
+        pred = max(0.0, min(pred, 500.0))
+
+        last_time = sim["timestamp"].iloc[-1]
+        next_time = last_time + pd.Timedelta(hours=1)
+        predictions.append({"timestamp": next_time, "aqi_us": round(pred, 1)})
+
+        new_row = sim.iloc[-1].copy()
+        new_row["timestamp"] = next_time
+        new_row["aqi_us"] = pred
+        sim = pd.concat([sim, pd.DataFrame([new_row])], ignore_index=True)
+        sim = _recompute_dynamic_features(sim)
+
+    return predictions
 
 
 def aqi_label(aqi: float) -> str:
@@ -180,8 +196,79 @@ def aqi_label(aqi: float) -> str:
         return "Hazardous"
 
 
-# ── FastAPI (formerly api.py) ─────────────────────────────────────────────────
+def predict(local: bool = False) -> dict:
+    """
+    Returns a dict (dashboard contract preserved):
+      {
+        "generated_at": ISO,
+        "forecasts": [{"horizon_h": 24/48/72, "aqi_us": float, "label": str}],
+        "hourly_forecast": [{"timestamp": ISO, "aqi_us": float}],   # full 96h
+        "latest_actual": float,
+        "latest_timestamp": ISO,
+        "feature_row": dict,     # for SHAP
+      }
+    """
+    cfg = load_config()
 
+    if local:
+        artifact = load_model_local()
+        try:
+            df = get_recent_features_live(cfg)
+        except Exception:
+            df = get_recent_features_from_local_csv()
+    else:
+        artifact = load_model_mongodb(cfg)
+        try:
+            df = get_recent_features_mongodb(cfg)
+        except Exception:
+            log.warning("MongoDB feature read failed; falling back to live fetch.")
+            df = get_recent_features_live(cfg)
+
+    model = artifact["model"]
+    scaler = artifact["scaler"]
+    features = artifact.get("features") or resolve_feature_columns(cfg, local=local)
+    features = [c for c in features if c in df.columns]
+    if not features:
+        raise RuntimeError("No model features present in the feature frame.")
+
+    available = df.dropna(subset=features)
+    if available.empty:
+        if local:
+            df = get_recent_features_from_local_csv()
+            available = df.dropna(subset=[c for c in features if c in df.columns])
+        if available.empty:
+            raise RuntimeError("No complete feature rows available for inference.")
+
+    seed = available.copy()
+    latest_row = seed.iloc[[-1]]
+    latest_aqi = float(latest_row["aqi_us"].values[0]) if "aqi_us" in latest_row.columns else None
+    latest_ts = pd.to_datetime(latest_row["timestamp"].values[0])
+
+    hourly = forecast_iterative(seed, model, scaler, features, steps=FORECAST_STEPS)
+
+    forecasts = []
+    for h in TARGET_HORIZONS:
+        idx = min(h - 1, len(hourly) - 1)
+        aqi_val = hourly[idx]["aqi_us"] if hourly else (latest_aqi or 0.0)
+        forecasts.append({
+            "horizon_h": h,
+            "aqi_us": round(float(aqi_val), 1),
+            "label": aqi_label(aqi_val),
+        })
+
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "forecasts": forecasts,
+        "hourly_forecast": [
+            {"timestamp": p["timestamp"].isoformat(), "aqi_us": p["aqi_us"]} for p in hourly
+        ],
+        "latest_actual": latest_aqi,
+        "latest_timestamp": str(latest_ts),
+        "feature_row": latest_row[features].to_dict(orient="records")[0],
+    }
+
+
+# ── FastAPI ───────────────────────────────────────────────────────────────────
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -196,8 +283,8 @@ async def _api_lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="AQI Predictor API — Karachi",
-    description="3-day Air Quality Index forecast powered by Open-Meteo + MongoDB + scikit-learn.",
-    version="1.0.0",
+    description="3-day Air Quality Index forecast via iterative one-hour-ahead prediction.",
+    version="2.0.0",
     lifespan=_api_lifespan,
 )
 app.add_middleware(
