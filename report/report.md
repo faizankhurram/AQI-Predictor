@@ -9,7 +9,7 @@
 
 ## 1. Problem Statement
 
-Air quality in Karachi regularly reaches hazardous levels due to vehicular emissions, industrial activity, and seasonal dust. Timely 3-day forecasts allow residents and authorities to take preventive action. This project builds an end-to-end, serverless ML pipeline that automatically collects hourly air-quality and weather data, trains forecasting models daily, and surfaces predictions through an interactive web dashboard.
+Karachi faces recurring poor air quality from traffic, industry, and seasonal dust. Residents need more than a single current reading—they need a short-horizon outlook to plan outdoor activity and early response. This project delivers an automated **3-day US AQI forecast** (+24h, +48h, +72h) for Karachi using hourly Open-Meteo data, a cloud feature store, daily model retraining, and a public Streamlit dashboard (with optional FastAPI endpoints).
 
 ---
 
@@ -19,162 +19,89 @@ Air quality in Karachi regularly reaches hazardous levels due to vehicular emiss
 Open-Meteo (Air Quality + Weather)
         │
         ▼
-feature_pipeline.py  ──►  MongoDB Feature Collection (aqi_hourly_v1)
-        │                                │
-(hourly, GitHub Actions)          training_pipeline.py
-                                         │ (daily, GitHub Actions)
-                                         ▼
-                                  MongoDB GridFS Model Registry
-                                         │
-                            ┌────────────┴────────────┐
-                            ▼                         ▼
-                         FastAPI (predict.py)     Streamlit (dashboard.py)
-                                         │
-                               3-day AQI forecast + alerts + SHAP
+run_pipeline.py feature  ──►  MongoDB (aqi_hourly_v1)
+        │                              │
+   (hourly, GitHub Actions)      run_pipeline.py train
+                                       │ (daily, GitHub Actions)
+                                       ▼
+                                MongoDB GridFS + model_registry
+                                       │
+                          ┌────────────┴────────────┐
+                          ▼                         ▼
+                   FastAPI (predict.py)      Streamlit (dashboard.py)
+                          │
+                3-day forecast + alerts + SHAP
 ```
 
----
+**Data flow.** Open-Meteo supplies PM2.5, PM10, NO₂, O₃, temperature, humidity, wind speed/direction, and precipitation—no API key required. A one-time backfill loads ~90 days of history; an hourly GitHub Action keeps MongoDB current. A daily training job compares four regressors, registers the best model in GridFS, and stores metrics in the registry.
 
-## 3. Data Sources
-
-| Source | Endpoint | Variables |
-|--------|----------|-----------|
-| Open-Meteo Air Quality | `air-quality-api.open-meteo.com` | PM2.5, PM10, NO₂, O₃, US AQI |
-| Open-Meteo Weather Archive | `archive-api.open-meteo.com` | Temperature, Humidity, Wind speed, Precipitation |
-| Open-Meteo Forecast | `api.open-meteo.com` | Same weather variables (live) |
-
-No API key required. Historical archive used for backfill; forecast endpoint used in live pipeline and inference.
+**Serving.** The Streamlit app (deployed on Streamlit Community Cloud) reads the latest features and registered model from MongoDB. FastAPI exposes `/health`, `/predict`, and `/predict/local` for programmatic access.
 
 ---
 
-## 4. Feature Engineering
+## 3. Tech Stack & CI/CD
 
-Each hourly row in the MongoDB feature collection contains:
+**Stack.** Data comes from Open-Meteo (air quality + weather). MongoDB Atlas stores hourly features (`aqi_hourly_v1`) and registered models (`model_registry` + GridFS). Models are built with scikit-learn and XGBoost. The dashboard runs on Streamlit Community Cloud; inference is also exposed via FastAPI. Configuration lives in `config/settings.yaml` and environment secrets (`.env` locally, Streamlit/GitHub secrets in deployment).
 
-| Category | Features |
-|----------|----------|
-| Raw pollutants | `pm2_5`, `pm10`, `no2`, `o3` |
-| AQI | `aqi_us` (US EPA scale, from API or computed from PM2.5 breakpoints) |
-| Weather | `temperature_2m`, `relative_humidity_2m`, `wind_speed_10m` |
-| Calendar | `hour`, `day_of_week`, `month` |
-| Lag features | `aqi_lag_1h`, `aqi_lag_24h` |
-| Change rates | `aqi_change_1h`, `aqi_change_24h` |
-| Targets | `aqi_t_plus_24h`, `aqi_t_plus_48h`, `aqi_t_plus_72h` |
-
-**Leakage prevention:** Targets are computed by shifting future AQI values. Time-based split (last 14 days = test) is used — no random shuffling.
+**CI/CD.** Two GitHub Actions workflows in `.github/workflows/` keep the pipeline hands-free: the **Feature Pipeline** runs every hour (`python run_pipeline.py feature`) to fetch recent data and upsert MongoDB; the **Training Pipeline** runs daily at 02:00 UTC (`python run_pipeline.py train`) to retrain and register the best model. Both use `MONGODB_URI` from GitHub Secrets and support manual triggers via `workflow_dispatch`.
 
 ---
 
-## 5. Models and Results
+## 4. Methodology
 
-Four models trained on the multi-output regression task (predict AQI at +24h, +48h, +72h simultaneously):
+**Feature engineering.** Raw PM2.5 is calibrated (×1.42) for South Asian sensor bias; US AQI is recomputed with 2024 EPA breakpoints. Engineered inputs include 24h rolling means per pollutant, cyclic hour/day/month encodings, wind U/V components, AQI lags and change rates, and interaction indices (smog, dispersion, heat). Targets are future AQI at +24h, +48h, and +72h via backward shift. Incomplete rows from lags/rolls are dropped; volatile columns are winsorized on the train split only.
 
-| Model | Avg RMSE | Avg MAE | Avg R² |
-|-------|----------|---------|--------|
-| Linear Regression | _fill after training_ | _fill_ | _fill_ |
-| Ridge Regression | _fill after training_ | _fill_ | _fill_ |
-| Random Forest | _fill after training_ | _fill_ | _fill_ |
-| XGBoost | _fill after training_ | _fill_ | _fill_ |
-
-> Best model registered in MongoDB GridFS model registry. See `models_artifacts/metrics.json` for full per-horizon breakdown.
-
-### Optional: TensorFlow MLP
-A 2-layer MLP (128 → 64 → 3 outputs) was also trained. It can be registered to the MongoDB model registry if its average RMSE beats the sklearn best model.
+**Modelling.** Four multi-output regressors (Linear, Ridge, Random Forest, XGBoost) predict all three horizons jointly. Features with pairwise correlation ≥0.85 are pruned, keeping the variable more correlated with the +24h target. Evaluation uses a **time-based holdout** (last 14 days as test)—no random shuffle. The lowest average RMSE model is saved locally and registered in MongoDB.
 
 ---
 
-## 6. CI/CD Pipeline
+## 5. Results and Discussion
 
-| Workflow | Schedule | Trigger |
-|----------|----------|---------|
-| `feature_pipeline.yml` | Every hour (`0 * * * *`) | `workflow_dispatch` available |
-| `training_pipeline.yml` | Daily at 02:00 UTC (`0 2 * * *`) | `workflow_dispatch` available |
+**Model comparison** (fill from `models_artifacts/metrics.json` or `show_model_metrics.py` after training):
 
-Secrets required: `MONGODB_URI` (and optional `MONGODB_DB`) set in GitHub → Settings → Secrets.
+| Model             | Avg RMSE | Avg MAE | Avg R² |
+|-------------------|----------|---------|--------|
+| Linear Regression | _fill_   | _fill_  | _fill_ |
+| Ridge             | _fill_   | _fill_  | _fill_ |
+| Random Forest     | _fill_   | _fill_  | _fill_ |
+| XGBoost           | _fill_   | _fill_  | _fill_ |
 
----
+The best model is registered in MongoDB GridFS. Optional TensorFlow MLP (128→64→3) is trained only if it beats sklearn on average RMSE.
 
-## 7. Dashboard Features
+**EDA highlights** (from `notebooks/eda_quick.ipynb`; images in `notebooks/visuals/`):
 
-- **Current conditions card** — live US AQI + label
-- **3-day forecast cards** — +1d, +2d, +3d predicted AQI with colour-coded labels
-- **Historical + forecast chart** — 7-day trend + forecast overlay
-- **Pollutant snapshot table** — PM2.5, PM10, NO₂, O₃, Temperature, Humidity, Wind
-- **Hazard alerts** — persistent banner when current or any forecast AQI ≥ 150
-- **SHAP explainability panel** — top 5 feature contributions for the latest prediction
+- **PM2.5 dominates US AQI (correlation >0.95).**  
+  Insert: `07_correlation.png` — correlation heatmap; PM2.5 / `aqi_us` / lag columns cluster tightly.  
+  Optional support: `01_calibration_impact.png` — PM2.5 before/after calibration vs recomputed AQI.
 
----
+  ![PM2.5–AQI correlation](../notebooks/visuals/07_correlation.png)
 
-## 8. Exploratory Data Analysis
+- **AQI peaks in early morning (06:00–09:00) and evening (18:00–22:00).**  
+  Insert: `06_hourly_monthly_pattern.png` — **left panel** (“Average AQI by hour of day”).
 
-<!-- Insert screenshots from notebooks/eda_quick.ipynb -->
+  ![Hourly AQI pattern](../notebooks/visuals/06_hourly_monthly_pattern.png)
 
-**AQI time series:**  
-![AQI Time Series](eda_aqi_timeseries.png)
+- **Higher wind speed correlates with lower AQI (dispersion).**  
+  Insert: `07_correlation.png` — locate `wind_speed_10m` vs `aqi_us` (and vs `dispersion_index` if present); negative association supports the dispersion story.
 
-**Hourly pattern:**  
-![Hourly Pattern](eda_hourly_pattern.png)
+- **Winter months (Nov–Feb) show elevated particulates.**  
+  Insert: `06_hourly_monthly_pattern.png` — **right panel** (“Average AQI by month”); Nov–Feb bars sit higher than summer months.
 
-**Correlation matrix:**  
-![Correlation](eda_correlation.png)
+**Optional context figures** (not tied to the bullets above, useful for appendix or extra page):
 
-**AQI distribution:**  
-![Distribution](eda_aqi_distribution.png)
+| Figure | File | Use |
+|--------|------|-----|
+| AQI over backfill window | `04_aqi_timeseries.png` | Shows variability over time |
+| Category frequency | `05_aqi_distribution.png` | Hours spent in each EPA band |
+| Lag vs +24h target | `09_lag_vs_target_24h.png` | Persistence of AQI forecasting |
+| Top features for +24h | `11_feature_target_assoc_24h.png` | Strongest \|r\| with target |
 
-Key findings:
-- PM2.5 is the strongest predictor of US AQI (correlation > 0.95).
-- AQI peaks during early morning (06:00–09:00) and evening (18:00–22:00) hours.
-- Wind speed shows moderate negative correlation — higher winds disperse pollutants.
-- Winter months (Nov–Feb) show significantly elevated PM2.5.
+**Dashboard.** The deployed UI shows current AQI, +1d/+2d/+3d forecast cards, a 7-day history chart with EPA zone bands, pollutant snapshot, hazard banner when any forecast exceeds 150, and optional SHAP for the +24h horizon.
 
----
-
-## 9. Hazard Alert Thresholds
-
-| US AQI | Category | Action |
-|--------|----------|--------|
-| 0–50 | Good | None |
-| 51–100 | Moderate | Unusually sensitive people should consider limiting outdoor activity |
-| 101–150 | Unhealthy for Sensitive Groups | Sensitive individuals should limit prolonged outdoor exertion |
-| 151–200 | Unhealthy | Everyone may begin to experience health effects |
-| 201–300 | Very Unhealthy | Health alert: everyone may experience more serious effects |
-| 301+ | Hazardous | Health warnings of emergency conditions |
-
-Dashboard displays a coloured banner whenever current or any forecast day crosses 150.
+**Limitations.** Forecasts rely on Open-Meteo rather than independent ground stations; US AQI is PM2.5-driven; 90-day training may miss full seasonal cycles; Karachi-only coordinates (other cities need config changes only).
 
 ---
 
-## 10. Limitations
+## 6. Conclusion
 
-1. **Single pollutant emphasis:** US AQI is primarily driven by PM2.5; NO₂ and O₃ are available but rarely dominant in Karachi's profile — model may underweight them.
-2. **Open-Meteo coverage:** Karachi's air-quality station coverage can have sporadic gaps; forward-fill of up to 6 hours is applied.
-3. **Single city:** The pipeline is tuned for Karachi coordinates. Extending to other cities requires only config changes.
-4. **Short backfill:** 90-day training window is sufficient for seasonal patterns but a full year would improve winter/summer model discrimination.
-5. **No real-time ground truth:** The model targets are derived from the same Open-Meteo API rather than independent monitoring stations — an alternative ground-truth source (e.g., Pakistan EPA) would strengthen evaluation.
-
----
-
-## 11. Reproduction Instructions
-
-See `README.md` for step-by-step setup. Summary:
-
-```bash
-# 1. Clone and set up
-git clone <repo-url>
-cd AQI-Predictor
-python -m venv venv && venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env   # fill in MongoDB credentials
-
-# 2. Backfill 90 days
-python src/pipelines/backfill.py --days 90
-
-# 3. Train models
-python src/pipelines/training_pipeline.py
-
-# 4. Launch dashboard
-streamlit run src/app/streamlit_app.py
-
-# 5. Launch API (optional)
-uvicorn src.serving.api:app --reload
-```
+<!-- Complete this section yourself. -->
