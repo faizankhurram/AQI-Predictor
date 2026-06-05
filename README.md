@@ -2,6 +2,8 @@
 
 End-to-end **3-day US AQI forecasting** for Karachi, Pakistan — from live environmental data to a deployable model and interactive dashboard.
 
+Deployed Link: https://faizan-aqi-predictor-karachi.streamlit.app
+
 ---
 
 ## Overview
