@@ -239,3 +239,28 @@ def load_latest_model(name: str = DEFAULT_MODEL_NAME, cfg: dict | None = None):
     fs = gridfs.GridFS(db)
     grid_out = fs.get(document["file_id"])
     return joblib.load(io.BytesIO(grid_out.read()))
+
+
+def clear_mongodb_data(cfg: dict | None = None) -> dict[str, int]:
+    """
+    Delete all feature rows, model registry entries, and GridFS artifacts.
+    Returns counts of deleted documents/files.
+    """
+    db_name = _collection_name(cfg, "database", DEFAULT_DB_NAME)
+    db = get_database(db_name)
+    feature_name = _collection_name(cfg, "feature_collection", DEFAULT_FEATURE_COLLECTION)
+    model_name = _collection_name(cfg, "model_collection", DEFAULT_MODEL_COLLECTION)
+
+    feature_result = db[feature_name].delete_many({})
+    registry_result = db[model_name].delete_many({})
+
+    chunks_result = db["fs.chunks"].delete_many({})
+    files_result = db["fs.files"].delete_many({})
+
+    return {
+        "database": db_name,
+        "features_deleted": feature_result.deleted_count,
+        "registry_deleted": registry_result.deleted_count,
+        "gridfs_files_deleted": files_result.deleted_count,
+        "gridfs_chunks_deleted": chunks_result.deleted_count,
+    }

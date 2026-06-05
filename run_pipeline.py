@@ -30,6 +30,9 @@ def main():
     backfill_p.add_argument("--days", type=int, default=90)
     backfill_p.add_argument("--csv-only", action="store_true")
 
+    reset_p = sub.add_parser("reset", help="Wipe MongoDB features, registry, and GridFS")
+    reset_p.add_argument("--yes", action="store_true", help="Confirm destructive wipe")
+
     args = parser.parse_args()
 
     if args.command == "feature":
@@ -41,6 +44,9 @@ def main():
     elif args.command == "backfill":
         from src.pipelines.backfill import run as run_backfill
         run_backfill(backfill_days=args.days, csv_only=args.csv_only)
+    elif args.command == "reset":
+        from src.pipelines.reset_mongo import run as run_reset
+        run_reset(confirm=args.yes)
 
 
 if __name__ == "__main__":
