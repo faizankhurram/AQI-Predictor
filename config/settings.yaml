@@ -12,13 +12,12 @@ mongodb:
 
 data:
   backfill_days: 365
-  forecast_horizons_h: [24, 48, 72]   # display horizons derived from iterative forecast
-  forecast_steps_h: 96                 # iterative one-hour-ahead steps
-  train_test_split: 0.8                # time-ordered train fraction
+  forecast_horizons_h: [24, 48, 72]
+  forecast_steps_h: 96
+  train_test_split: 0.8
 
 alerts:
   good_max: 50
   moderate_max: 100
   sensitive_max: 150
   unhealthy_max: 200
-  # above 200 = Very Unhealthy / Hazardous

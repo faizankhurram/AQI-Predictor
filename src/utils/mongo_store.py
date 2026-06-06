@@ -1,4 +1,4 @@
-"""MongoDB-backed feature store and lightweight model registry."""
+"""MongoDB feature store and model registry."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from pymongo import MongoClient, UpdateOne
 from pymongo.collection import Collection
 from pymongo.database import Database
 
-
 DEFAULT_DB_NAME = "aqi_predictor"
 DEFAULT_FEATURE_COLLECTION = "aqi_hourly_v1"
 DEFAULT_MODEL_COLLECTION = "model_registry"
@@ -25,12 +24,11 @@ DEFAULT_MODEL_NAME = "aqi_forecaster"
 def _mongo_uri() -> str:
     uri = os.environ.get("MONGODB_URI")
     if not uri:
-        raise RuntimeError("MONGODB_URI is required for MongoDB feature/model storage.")
+        raise RuntimeError("MONGODB_URI is required.")
     return uri
 
 
 def get_database(db_name: str | None = None) -> Database:
-    """Create a MongoDB database handle from environment variables."""
     timeout_raw = os.environ.get("MONGODB_TIMEOUT_MS")
     if timeout_raw:
         timeout_ms = int(timeout_raw)
@@ -41,15 +39,12 @@ def get_database(db_name: str | None = None) -> Database:
             socketTimeoutMS=timeout_ms,
         )
     else:
-        # Use PyMongo defaults when no explicit timeout is provided.
         client = MongoClient(_mongo_uri())
     return client[db_name or os.environ.get("MONGODB_DB", DEFAULT_DB_NAME)]
 
 
 def _collection_name(cfg: dict | None, key: str, default: str) -> str:
-    if cfg:
-        return cfg.get("mongodb", {}).get(key, default)
-    return default
+    return cfg.get("mongodb", {}).get(key, default) if cfg else default
 
 
 def get_feature_collection(cfg: dict | None = None) -> Collection:
@@ -72,18 +67,9 @@ def _to_mongo_value(value: Any) -> Any:
         return None
     if isinstance(value, pd.Timestamp):
         value = value.to_pydatetime()
-    if isinstance(value, datetime):
-        if value.tzinfo is not None:
-            value = value.astimezone(timezone.utc).replace(tzinfo=None)
-        return value
+    if isinstance(value, datetime) and value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
-
-
-def dataframe_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for row in df.to_dict(orient="records"):
-        records.append({key: _to_mongo_value(value) for key, value in row.items()})
-    return records
 
 
 def dataframe_to_ingest_records(
@@ -92,14 +78,7 @@ def dataframe_to_ingest_records(
     omit_null_targets: bool = True,
     target_columns: tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
-    """
-    Build MongoDB $set payloads for feature ingest.
-
-    When omit_null_targets is True, future AQI labels that are null (recent hours)
-    are not sent to MongoDB so hourly sync does not wipe targets from backfill rows.
-    """
     if target_columns is None:
-        # Single-step next-hour target is created at train time, not stored.
         target_columns = ("target",)
 
     records: list[dict[str, Any]] = []
@@ -114,7 +93,6 @@ def dataframe_to_ingest_records(
 
 
 def upsert_features(df: pd.DataFrame, cfg: dict | None = None) -> int:
-    """Upsert feature rows by timestamp and return the number of rows submitted."""
     if df.empty:
         return 0
 
@@ -124,14 +102,7 @@ def upsert_features(df: pd.DataFrame, cfg: dict | None = None) -> int:
         timestamp = record.get("timestamp")
         if timestamp is None:
             continue
-        # Use $set so fields added by later pipeline runs are preserved,
-        # rather than replacing the whole document (ReplaceOne would wipe
-        # any fields not present in the current batch).
-        operations.append(UpdateOne(
-            {"timestamp": timestamp},
-            {"$set": record},
-            upsert=True,
-        ))
+        operations.append(UpdateOne({"timestamp": timestamp}, {"$set": record}, upsert=True))
 
     if not operations:
         return 0
@@ -140,14 +111,11 @@ def upsert_features(df: pd.DataFrame, cfg: dict | None = None) -> int:
 
 
 def delete_feature_rows_after(timestamp: pd.Timestamp | datetime, cfg: dict | None = None) -> int:
-    """Delete feature rows later than the provided local-naive timestamp."""
     collection = get_feature_collection(cfg)
-    result = collection.delete_many({"timestamp": {"$gt": _to_mongo_value(timestamp)}})
-    return result.deleted_count
+    return collection.delete_many({"timestamp": {"$gt": _to_mongo_value(timestamp)}}).deleted_count
 
 
 def read_features(cfg: dict | None = None) -> pd.DataFrame:
-    """Read all feature rows from MongoDB as a timestamp-sorted DataFrame."""
     collection = get_feature_collection(cfg)
     rows = list(collection.find({}, {"_id": 0}).sort("timestamp", 1))
     df = pd.DataFrame(rows)
@@ -156,17 +124,10 @@ def read_features(cfg: dict | None = None) -> pd.DataFrame:
     return df
 
 
-def read_features_since(
-    since: pd.Timestamp | datetime,
-    cfg: dict | None = None,
-) -> pd.DataFrame:
-    """Read feature rows newer than or equal to `since`."""
+def read_features_since(since: pd.Timestamp | datetime, cfg: dict | None = None) -> pd.DataFrame:
     collection = get_feature_collection(cfg)
     rows = list(
-        collection.find(
-            {"timestamp": {"$gte": _to_mongo_value(since)}},
-            {"_id": 0},
-        ).sort("timestamp", 1)
+        collection.find({"timestamp": {"$gte": _to_mongo_value(since)}}, {"_id": 0}).sort("timestamp", 1)
     )
     df = pd.DataFrame(rows)
     if not df.empty and "timestamp" in df.columns:
@@ -175,7 +136,6 @@ def read_features_since(
 
 
 def read_latest_feature_row(cfg: dict | None = None) -> pd.DataFrame:
-    """Read only the latest feature row."""
     collection = get_feature_collection(cfg)
     rows = list(collection.find({}, {"_id": 0}).sort("timestamp", -1).limit(1))
     df = pd.DataFrame(rows)
@@ -192,7 +152,6 @@ def save_model_artifact(
     metadata: dict[str, Any] | None = None,
     cfg: dict | None = None,
 ) -> dict[str, Any]:
-    """Store a model artifact in GridFS and metadata in a registry collection."""
     db = get_database(_collection_name(cfg, "database", DEFAULT_DB_NAME))
     fs = gridfs.GridFS(db)
     collection = db[_collection_name(cfg, "model_collection", DEFAULT_MODEL_COLLECTION)]
@@ -217,7 +176,7 @@ def save_model_artifact(
         "filename": os.path.basename(model_path),
         "metrics": metrics,
         "metadata": metadata or {},
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
     }
     result = collection.insert_one(document)
     document["_id"] = result.inserted_id
@@ -225,7 +184,6 @@ def save_model_artifact(
 
 
 def get_latest_model_document(name: str = DEFAULT_MODEL_NAME, cfg: dict | None = None) -> dict:
-    """Return the newest model registry document (metadata + GridFS id)."""
     collection = get_model_collection(cfg)
     document = collection.find_one({"name": name}, sort=[("created_at", -1)])
     if not document:
@@ -234,32 +192,24 @@ def get_latest_model_document(name: str = DEFAULT_MODEL_NAME, cfg: dict | None =
 
 
 def load_latest_model(name: str = DEFAULT_MODEL_NAME, cfg: dict | None = None):
-    """Load the newest registered model artifact from MongoDB GridFS."""
     document = get_latest_model_document(name, cfg)
     db = get_database(_collection_name(cfg, "database", DEFAULT_DB_NAME))
-    fs = gridfs.GridFS(db)
-    grid_out = fs.get(document["file_id"])
+    grid_out = gridfs.GridFS(db).get(document["file_id"])
     return joblib.load(io.BytesIO(grid_out.read()))
 
 
 def clear_mongodb_data(cfg: dict | None = None) -> dict[str, int]:
-    """
-    Delete all feature rows, model registry entries, and GridFS artifacts.
-    Returns counts of deleted documents/files.
-    """
-    db_name = _collection_name(cfg, "database", DEFAULT_DB_NAME)
-    db = get_database(db_name)
+    db = get_database(_collection_name(cfg, "database", DEFAULT_DB_NAME))
     feature_name = _collection_name(cfg, "feature_collection", DEFAULT_FEATURE_COLLECTION)
     model_name = _collection_name(cfg, "model_collection", DEFAULT_MODEL_COLLECTION)
 
     feature_result = db[feature_name].delete_many({})
     registry_result = db[model_name].delete_many({})
-
     chunks_result = db["fs.chunks"].delete_many({})
     files_result = db["fs.files"].delete_many({})
 
     return {
-        "database": db_name,
+        "database": db.name,
         "features_deleted": feature_result.deleted_count,
         "registry_deleted": registry_result.deleted_count,
         "gridfs_files_deleted": files_result.deleted_count,

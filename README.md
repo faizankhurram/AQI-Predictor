@@ -51,14 +51,11 @@ Karachi regularly experiences elevated particulate pollution from traffic, indus
 │   ├── dashboard.py             # Streamlit UI
 │   ├── data/openmeteo_client.py
 │   ├── features/build_features.py
-│   ├── models/
-│   │   ├── sklearn_trainer.py   # training + metrics
-│   │   └── tf_trainer.py        # optional MLP
-│   ├── pipelines/               # backfill, feature, training scripts
-│   ├── serving/predict.py       # inference + FastAPI app
+│   ├── models/sklearn_trainer.py
+│   ├── pipelines/
+│   ├── serving/predict.py
 │   └── utils/mongo_store.py
 ├── notebooks/eda_quick.ipynb
-├── report/report.md             # internship / project write-up
 └── .github/workflows/
 ```
 
@@ -126,7 +123,7 @@ Figures save to `notebooks/visuals/` (git-ignored).
 ### Local metrics viewer
 
 ```bash
-python show_model_metrics.py --detailed    # git-ignored dev script
+python show_model_metrics.py --local
 ```
 
 ---

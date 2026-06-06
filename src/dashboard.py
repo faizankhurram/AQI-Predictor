@@ -1,5 +1,5 @@
 """
-Streamlit AQI Predictor Dashboard — Karachi
+Streamlit dashboard for Karachi AQI forecasts.
 Run: streamlit run src/dashboard.py
 """
 
@@ -33,7 +33,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── AQI colour maps ──────────────────────────────────────────────────────────
 AQI_COLORS = {
     "Good":                           "#00e400",
     "Moderate":                       "#ffff00",
@@ -50,7 +49,6 @@ AQI_BG = {
     "Very Unhealthy":                 "#e6ccff",
     "Hazardous":                      "#ffb3c1",
 }
-# (y0, y1, fill-colour, label)
 AQI_BANDS = [
     (0,   50,  "#00e400", "Good"),
     (50,  100, "#ffff00", "Moderate"),
@@ -60,7 +58,6 @@ AQI_BANDS = [
     (300, 700, "#7e0023", "Hazardous"),
 ]
 
-# Max reference values used for progress bar width (% of max)
 POLLUTANT_MAX = {
     "pm2_5":                250,
     "pm10":                 430,
@@ -84,7 +81,6 @@ def _trend(prev: float, curr: float) -> str:
     return "→"
 
 
-# ── CSS injection ────────────────────────────────────────────────────────────
 def inject_css():
     st.markdown("""
     <style>
@@ -288,7 +284,6 @@ def inject_css():
     """, unsafe_allow_html=True)
 
 
-# ── Data loading ─────────────────────────────────────────────────────────────
 @st.cache_data(ttl=600, show_spinner=False)
 def load_historical_data() -> pd.DataFrame | None:
     try:
@@ -312,7 +307,6 @@ def get_prediction(use_local: bool) -> dict:
     return predict(local=use_local)
 
 
-# ── Alert banner ──────────────────────────────────────────────────────────────
 def render_alert(forecasts: list):
     worst_aqi = max(f["aqi_us"] for f in forecasts)
     worst_label = aqi_label(worst_aqi)
@@ -332,7 +326,6 @@ def render_alert(forecasts: list):
         )
 
 
-# ── Forecast cards ────────────────────────────────────────────────────────────
 def render_forecast_cards(forecasts: list, current_aqi: float | None):
     cols = st.columns(4)
 
@@ -373,7 +366,6 @@ def render_forecast_cards(forecasts: list, current_aqi: float | None):
         prev_val = fc["aqi_us"]
 
 
-# ── History + forecast chart ──────────────────────────────────────────────────
 def render_history_chart(hist_df: pd.DataFrame, forecasts: list, last_ts):
     cutoff = (
         pd.Timestamp(last_ts) - timedelta(days=7)
@@ -463,7 +455,6 @@ def render_history_chart(hist_df: pd.DataFrame, forecasts: list, last_ts):
     st.plotly_chart(fig, use_container_width=True)
 
 
-# ── Pollutant snapshot (native Streamlit — avoids markdown code-block escaping) ─
 def render_pollutant_snapshot(raw_row: dict):
     POLLUTANTS = [
         ("pm2_5",               "PM2.5 (µg/m³)",      "🌫️"),
@@ -494,7 +485,6 @@ def render_pollutant_snapshot(raw_row: dict):
             st.progress(ratio)
 
 
-# ── SHAP panel ────────────────────────────────────────────────────────────────
 def render_shap(feature_row: dict):
     try:
         import shap
@@ -572,11 +562,9 @@ def render_shap(feature_row: dict):
         st.warning(f"SHAP computation skipped: {exc}")
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     inject_css()
 
-    # ── Streamlit Cloud secrets → os.environ (no-op locally with .env) ─────────
     # Avoid doing this at import-time (can trigger transient Streamlit session init issues).
     try:
         for _key in ("MONGODB_URI", "MONGODB_DB"):
